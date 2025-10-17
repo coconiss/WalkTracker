@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Walkcord</string>
+
+    <!-- 메인 화면 -->
+    <string name="home_greeting">안녕하세요,</string>
+    <string name="today_steps">오늘의 걸음</string>
+    <string name="distance">이동 거리</string>
+    <string name="calories">소모 칼로리</string>
+    <string name="weekly_summary">이번 주 활동</string>
+
+    <!-- 랭킹 화면 -->
+    <string name="ranking_daily">일간</string>
+    <string name="ranking_monthly">월간</string>
+    <string name="ranking_yearly">연간</string>
+    <string name="my_rank">내 순위</string>
+    <string name="no_ranking_data">아직 랭킹 데이터가 없습니다</string>
+
+    <!-- 지도 화면 -->
+    <string name="today_route">오늘의 이동 경로</string>
+    <string name="route_points">%d개 포인트</string>
+    <string name="start_tracking">경로 추적 시작하기</string>
+    <string name="tracking_hint">걷기를 시작하면\n경로가 표시됩니다</string>
+
+    <!-- 설정 화면 -->
+    <string name="personal_settings">개인 설정</string>
+    <string name="app_settings">앱 설정</string>
+    <string name="weight_setting">체중 설정</string>
+    <string name="notification_setting">알림 설정</string>
+    <string name="privacy_setting">개인정보 보호</string>
+    <string name="app_info">앱 정보</string>
+    <string name="logout">로그아웃</string>
+    <string name="weight_dialog_title">체중 설정</string>
+    <string name="weight_dialog_message">정확한 칼로리 계산을 위해 체중을 입력해주세요.</string>
+
+    <!-- 알림 -->
+    <string name="notification_channel_name">걷기 추적</string>
+    <string name="notification_channel_desc">걸음수와 이동 거리를 추적합니다</string>
+    <string name="notification_title">걷기 추적 중</string>
+    <string name="notification_text">오늘: %d걸음 • %.2fkm</string>
+
+    <!-- 권한 -->
+    <string name="permission_location_rationale">위치 권한이 필요합니다</string>
+    <string name="permission_activity_rationale">활동 인식 권한이 필요합니다</string>
+
+    <!-- 버튼 -->
+    <string name="confirm">확인</string>
+    <string name="cancel">취소</string>
+    <string name="retry">다시 시도</string>
+
+    <!-- 에러 메시지 -->
+    <string name="error_load_user">사용자 정보를 불러올 수 없습니다</string>
+    <string name="error_network">네트워크 연결을 확인해주세요</string>
+    <string name="error_unknown">알 수 없는 오류가 발생했습니다</string>
+</resources>

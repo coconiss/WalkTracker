@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "415223373079",
+    "project_id": "walktrackerapp-15bb9",
+    "storage_bucket": "walktrackerapp-15bb9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:415223373079:android:5c0b9506ef11fd43a7ab52",
+        "android_client_info": {
+          "package_name": "com.walktracker.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCJI7xWP5MvGN-30AnHNUUmhUifHxF7nyk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
