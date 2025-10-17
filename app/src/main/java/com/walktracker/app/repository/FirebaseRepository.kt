@@ -1,5 +1,6 @@
 package com.walktracker.app.repository
 
+import android.util.Log
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
@@ -97,13 +98,34 @@ class FirebaseRepository {
         calories: Double,
         routes: List<RoutePoint> = emptyList()
     ): Result<Unit> = try {
-        firestore.runTransaction {
-            val user = it.get(usersCollection.document(userId)).toObject(User::class.java) ?: return@runTransaction
-            val docId = "${userId}_$date"
-            val docRef = activitiesCollection.document(docId)
-            val snapshot = it.get(docRef)
+        firestore.runTransaction { transaction ->
+            // --- 1. 모든 읽기 작업 --- 
+            val userRef = usersCollection.document(userId)
+            val user = transaction.get(userRef).toObject(User::class.java)
+                ?: throw IllegalStateException("User with ID $userId not found.")
 
-            if (snapshot.exists()) {
+            val activityDocId = "${userId}_$date"
+            val activityDocRef = activitiesCollection.document(activityDocId)
+            val activitySnapshot = transaction.get(activityDocRef)
+
+            // 랭킹 문서도 미리 읽기
+            val calendar = Calendar.getInstance().apply {
+                time = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(date)!!
+            }
+            val periods = mapOf(
+                "daily" to date,
+                "monthly" to String.format("%04d-%02d", calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH) + 1),
+                "yearly" to calendar.get(Calendar.YEAR).toString()
+            )
+            val rankingRefsAndSnapshots = periods.map { (period, periodKey) ->
+                val rankingDocId = "${period}_${periodKey}_${user.userId}"
+                val rankingRef = rankingsCollection.document(rankingDocId)
+                val rankingSnapshot = transaction.get(rankingRef)
+                Triple(rankingRef, rankingSnapshot, period to periodKey)
+            }
+
+            // --- 2. 모든 쓰기 작업 --- 
+            if (activitySnapshot.exists()) {
                 val updates = mutableMapOf<String, Any>(
                     "steps" to FieldValue.increment(steps),
                     "distance" to FieldValue.increment(distance),
@@ -113,51 +135,37 @@ class FirebaseRepository {
                 if (routes.isNotEmpty()) {
                     updates["routes"] = FieldValue.arrayUnion(*routes.toTypedArray())
                 }
-                it.update(docRef, updates)
+                transaction.update(activityDocRef, updates)
             } else {
-                val newActivity = DailyActivity(docId, userId, date, steps, distance, calories, routes = routes)
-                it.set(docRef, newActivity)
+                val newActivity = DailyActivity(activityDocId, userId, date, steps, distance, calories, routes = routes)
+                transaction.set(activityDocRef, newActivity)
             }
-            updateRankingsInTransaction(it, user, date, distance)
+
+            // 랭킹 업데이트
+            rankingRefsAndSnapshots.forEach { (rankingRef, rankingSnapshot, periodInfo) ->
+                val (period, periodKey) = periodInfo
+                if (rankingSnapshot.exists()) {
+                    transaction.update(rankingRef, "distance", FieldValue.increment(distance))
+                } else {
+                    val newRanking = RankingEntry(
+                        userId = user.userId,
+                        displayName = user.displayName,
+                        distance = distance,
+                        period = period,
+                        periodKey = periodKey
+                    )
+                    transaction.set(rankingRef, newRanking)
+                }
+            }
         }.await()
         Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)
     }
 
-    private fun updateRankingsInTransaction(transaction: Transaction, user: User, date: String, distance: Double) {
-        val parsedDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(date) ?: return
-        val calendar = Calendar.getInstance().apply { time = parsedDate }
-
-        val periods = mapOf(
-            "daily" to date,
-            "monthly" to String.format("%04d-%02d", calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH) + 1),
-            "yearly" to calendar.get(Calendar.YEAR).toString()
-        )
-
-        periods.forEach { (period, periodKey) ->
-            val rankingDocId = "${period}_${periodKey}_${user.userId}"
-            val rankingRef = rankingsCollection.document(rankingDocId)
-            val rankingSnapshot = transaction.get(rankingRef)
-
-            if (rankingSnapshot.exists()) {
-                transaction.update(rankingRef, "distance", FieldValue.increment(distance))
-            } else {
-                val newRanking = RankingEntry(
-                    userId = user.userId,
-                    displayName = user.displayName,
-                    distance = distance,
-                    period = period,
-                    periodKey = periodKey
-                )
-                transaction.set(rankingRef, newRanking)
-            }
-        }
-    }
-
     fun getDailyActivity(userId: String, date: String): Flow<DailyActivity?> {
         return callbackFlow {
-            val docId = "${userId}_${date}"
+            val docId = "${userId}_$date"
             val listener = activitiesCollection.document(docId).addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     close(error)
@@ -170,7 +178,7 @@ class FirebaseRepository {
     }
 
     suspend fun getDailyActivityOnce(userId: String, date: String, onComplete: (DailyActivity?) -> Unit) {
-        val docId = "${userId}_${date}"
+        val docId = "${userId}_$date"
         activitiesCollection.document(docId).get()
             .addOnSuccessListener { document -> onComplete(document?.toObject(DailyActivity::class.java)) }
             .addOnFailureListener { onComplete(null) }
@@ -197,20 +205,32 @@ class FirebaseRepository {
     // --- Rankings --- //
 
     suspend fun getRankings(period: String, periodKey: String, limit: Int = 100): List<RankingEntry> {
+        Log.d("FirebaseRepository", "getRankings 호출: period=$period, periodKey=$periodKey")
         return try {
-            rankingsCollection
+            val snapshot = rankingsCollection
                 .whereEqualTo("period", period)
                 .whereEqualTo("periodKey", periodKey)
                 .orderBy("distance", Query.Direction.DESCENDING)
                 .limit(limit.toLong())
                 .get()
                 .await()
-                .documents
-                .mapIndexed { index, doc ->
-                    doc.toObject(RankingEntry::class.java)?.copy(rank = index + 1)
+
+            Log.d("FirebaseRepository", "Firestore 쿼리 성공: ${snapshot.size()} 개의 문서를 찾았습니다.")
+
+            val rankings = snapshot.documents
+                .mapIndexedNotNull { index, doc ->
+                    try {
+                        doc.toObject(RankingEntry::class.java)?.apply { rank = index + 1 }
+                    } catch (e: Exception) {
+                        Log.e("FirebaseRepository", "문서 변환 실패: docId=${doc.id}", e)
+                        null
+                    }
                 }
-                .filterNotNull()
+
+            Log.d("FirebaseRepository", "최종 랭킹 목록 크기: ${rankings.size}")
+            rankings
         } catch (e: Exception) {
+            Log.e("FirebaseRepository", "getRankings 실패", e)
             emptyList()
         }
     }

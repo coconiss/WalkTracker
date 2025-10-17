@@ -41,7 +41,7 @@ data class RankingEntry(
     val userId: String = "",
     val displayName: String = "",
     val distance: Double = 0.0,
-    val rank: Int = 0,
+    var rank: Int = 0,
     val period: String = "", // daily, monthly, yearly
     val periodKey: String = "" // 2025-01-15, 2025-01, 2025
 )

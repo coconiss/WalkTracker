@@ -1,73 +1,66 @@
 package com.walktracker.app.util
 
 import com.walktracker.app.model.ActivityType
+import kotlin.math.roundToInt
 
 object CalorieCalculator {
 
-    // MET (Metabolic Equivalent of Task) 값
-    private const val MET_WALKING = 3.5
-    private const val MET_RUNNING = 8.0
+    /**
+     * 활동 유형과 속도(m/s)에 따라 MET(Metabolic Equivalent of Task) 값을 반환합니다.
+     *
+     * @param activityType 활동 유형 (WALKING, RUNNING, STILL 등)
+     * @param speedMps 초당 미터 속도
+     * @return MET 값
+     */
+    private fun getMetValue(activityType: ActivityType, speedMps: Float): Double {
+        return when (activityType) {
+            ActivityType.STILL -> 1.0 // 휴식
+            ActivityType.WALKING -> {
+                when {
+                    speedMps < 0.9 -> 2.0 // 매우 느린 걸음 (~3.2 km/h 미만)
+                    speedMps < 1.3 -> 3.5 // 보통 걸음 (~4.7 km/h 미만)
+                    speedMps < 1.8 -> 5.0 // 빠른 걸음 (~6.5 km/h 미만)
+                    else -> 6.3           // 매우 빠른 걸음
+                }
+            }
+            ActivityType.RUNNING -> {
+                when {
+                    speedMps < 2.2 -> 8.0  // 조깅 (~8 km/h 미만)
+                    speedMps < 3.0 -> 11.0 // 달리기 (~10.8 km/h 미만)
+                    speedMps < 4.5 -> 14.5 // 빠른 달리기 (~16 km/h 미만)
+                    else -> 19.0           // 매우 빠른 달리기
+                }
+            }
+            else -> 1.0 // 기타 활동은 휴식으로 처리
+        }
+    }
 
     /**
-     * 칼로리 계산
+     * MET 공식을 사용하여 소모된 칼로리를 계산합니다.
+     * 공식: (MET * 3.5 * 체중(kg)) / 200 * 활동 시간(분)
+     *
      * @param weightKg 사용자 체중 (kg)
-     * @param distanceKm 이동 거리 (km)
+     * @param speedMps 초당 미터 속도
+     * @param durationSeconds 활동 지속 시간 (초)
      * @param activityType 활동 유형
      * @return 소모 칼로리 (kcal)
      */
     fun calculate(
         weightKg: Double,
-        distanceKm: Double,
+        speedMps: Float,
+        durationSeconds: Long,
         activityType: ActivityType
     ): Double {
-        return when (activityType) {
-            ActivityType.WALKING -> {
-                // 걷기: 체중(kg) × 거리(km) × 1.05
-                weightKg * distanceKm * 1.05
-            }
-            ActivityType.RUNNING -> {
-                // 달리기: 체중(kg) × 거리(km) × 1.6
-                weightKg * distanceKm * 1.6
-            }
-            else -> 0.0
-        }
-    }
-
-    /**
-     * 시간 기반 칼로리 계산 (보조 메서드)
-     * @param weightKg 사용자 체중 (kg)
-     * @param durationMinutes 활동 시간 (분)
-     * @param activityType 활동 유형
-     * @return 소모 칼로리 (kcal)
-     */
-    fun calculateByDuration(
-        weightKg: Double,
-        durationMinutes: Double,
-        activityType: ActivityType
-    ): Double {
-        val met = when (activityType) {
-            ActivityType.WALKING -> MET_WALKING
-            ActivityType.RUNNING -> MET_RUNNING
-            else -> 0.0
+        if (durationSeconds <= 0 || weightKg <= 0) {
+            return 0.0
         }
 
-        // 칼로리 = MET × 체중(kg) × 시간(시간)
-        return met * weightKg * (durationMinutes / 60.0)
-    }
+        val met = getMetValue(activityType, speedMps)
+        val durationMinutes = durationSeconds / 60.0
+        
+        // 분당 소모 칼로리 = (MET * 3.5 * 체중) / 200
+        val caloriesPerMinute = (met * 3.5 * weightKg) / 200.0
 
-    /**
-     * 걸음수 기반 칼로리 추정
-     * @param weightKg 사용자 체중 (kg)
-     * @param steps 걸음수
-     * @param strideLength 보폭 (미터, 기본값 0.7m)
-     * @return 소모 칼로리 (kcal)
-     */
-    fun calculateFromSteps(
-        weightKg: Double,
-        steps: Long,
-        strideLength: Double = 0.7
-    ): Double {
-        val distanceKm = (steps * strideLength) / 1000.0
-        return calculate(weightKg, distanceKm, ActivityType.WALKING)
+        return caloriesPerMinute * durationMinutes
     }
 }

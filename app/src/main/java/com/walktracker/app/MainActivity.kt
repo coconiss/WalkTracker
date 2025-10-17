@@ -62,6 +62,11 @@ class MainActivity : ComponentActivity() {
         auth = FirebaseAuth.getInstance()
         MobileAds.initialize(this) {}
 
+        // 사용자가 이미 로그인했다면, 권한 확인 후 서비스 시작
+        if (auth.currentUser != null) {
+            requestPermissions()
+        }
+
         setContent {
             WalkTrackerTheme {
                 Surface(
@@ -196,8 +201,9 @@ fun MainApp(
 
             composable("map") {
                 MapScreen(
-                    routePoints = uiState.todayActivity?.routes ?: emptyList(),
-                    onLocationRequest = { /* 위치 요청 */ }
+                    routePoints = emptyList(), // 더 이상 사용하지 않음 (내부에서 로드)
+                    lastKnownLocation = uiState.lastKnownLocation,
+                    onLocationRequest = { viewModel.requestLocationUpdate() }
                 )
             }
 
