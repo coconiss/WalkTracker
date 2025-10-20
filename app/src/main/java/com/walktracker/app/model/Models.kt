@@ -23,6 +23,7 @@ data class DailyActivity(
     val steps: Long = 0L,
     val distance: Double = 0.0, // km
     val calories: Double = 0.0,
+    val altitude: Double = 0.0, // m
     val activeMinutes: Int = 0,
     val routes: List<RoutePoint> = emptyList(),
     val updatedAt: Timestamp = Timestamp.now()
@@ -33,7 +34,8 @@ data class RoutePoint(
     val latitude: Double = 0.0,
     val longitude: Double = 0.0,
     val timestamp: Long = 0L,
-    val activityType: String = "WALKING" // WALKING, RUNNING, STILL, VEHICLE
+    val activityType: String = "WALKING", // WALKING, RUNNING, STILL, VEHICLE
+    val speed: Double = 0.0 // m/s
 )
 
 // 랭킹 데이터

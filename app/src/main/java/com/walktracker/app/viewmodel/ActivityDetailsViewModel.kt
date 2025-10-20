@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldPath
 import com.google.firebase.firestore.FirebaseFirestore
+import com.walktracker.app.model.RoutePoint
 import com.walktracker.app.ui.screen.ActivityDetailData
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,7 +38,8 @@ data class FirestoreDailyActivity(
     val steps: Long = 0L,
     val distance: Double = 0.0,
     val calories: Double = 0.0,
-    val date: String = "" // 문서 내의 date 필드
+    val date: String = "", // 문서 내의 date 필드
+    val routes: List<RoutePoint> = emptyList() // 경로 데이터 추가
 )
 
 class ActivityDetailsViewModel : ViewModel() {
@@ -114,6 +116,13 @@ class ActivityDetailsViewModel : ViewModel() {
                         Log.w(TAG, "Failed to parse document: ${doc.id}")
                         null
                     } else {
+                        // 평균 속도 계산
+                        val avgSpeed = if (firestoreData.routes.isNotEmpty()) {
+                            firestoreData.routes.map { it.speed }.average()
+                        } else {
+                            0.0
+                        }
+
                         // 문서 내부의 date(String)를 UI에서 사용할 Date 객체로 변환
                         val date = dateFormat.parse(firestoreData.date)
                         date?.let {
@@ -121,7 +130,8 @@ class ActivityDetailsViewModel : ViewModel() {
                                 date = it,
                                 steps = firestoreData.steps,
                                 distance = firestoreData.distance,
-                                calories = firestoreData.calories
+                                calories = firestoreData.calories,
+                                avgSpeed = avgSpeed // 평균 속도 추가
                             )
                         }
                     }

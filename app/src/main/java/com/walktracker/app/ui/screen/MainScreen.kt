@@ -4,6 +4,8 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -32,6 +34,8 @@ fun MainScreen(
     onRefresh: () -> Unit,
     onNavigateToDetails: () -> Unit
 ) {
+    val scrollState = rememberScrollState()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -44,6 +48,7 @@ fun MainScreen(
                 )
             )
             .padding(16.dp)
+            .verticalScroll(scrollState)
     ) {
         // 상단 인사말
         GreetingSection(userName = uiState.user?.displayName ?: "사용자")
@@ -79,6 +84,31 @@ fun MainScreen(
                 value = (uiState.todayActivity?.calories ?: 0.0).roundToInt().toString(),
                 unit = "kcal",
                 color = MaterialTheme.colorScheme.error
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp)) // 카드 사이 간격 추가
+
+        // 고도 및 속도 정보 카드
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            StatCard(
+                modifier = Modifier.weight(1f),
+                icon = Icons.Default.Terrain, // 고도 아이콘
+                label = "상승 고도",
+                value = String.format("%.1f", uiState.todayActivity?.altitude ?: 0.0),
+                unit = "m",
+                color = Color(0xFF3F51B5) // Indigo 색상
+            )
+            StatCard(
+                modifier = Modifier.weight(1f),
+                icon = Icons.Default.Speed, // 속도 아이콘
+                label = "현재 속도",
+                value = String.format("%.1f", uiState.currentSpeed * 3.6),
+                unit = "km/h",
+                color = Color(0xFF009688) // Teal 색상
             )
         }
 

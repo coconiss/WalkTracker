@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -36,7 +38,8 @@ data class ActivityDetailData(
     val date: Date, // 타입을 Date로 변경
     val steps: Long,
     val distance: Double,
-    val calories: Double
+    val calories: Double,
+    val avgSpeed: Double // 평균 속도 추가
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -120,6 +123,16 @@ fun ActivityDetailsScreen(
                             chartType = uiState.chartType,
                             valueSelector = { it.distance },
                             primaryColor = Color(0xFF42A5F5) // Blue
+                        )
+                    }
+
+                    item {
+                        ChartSection(
+                            title = "평균 속도 (km/h)",
+                            data = uiState.activityData,
+                            chartType = uiState.chartType,
+                            valueSelector = { it.avgSpeed * 3.6 }, // m/s를 km/h로 변환
+                            primaryColor = Color(0xFF66BB6A) // Green
                         )
                     }
                 }
@@ -281,32 +294,33 @@ fun DatePickerDialog(
 
 @Composable
 fun ActivityGrid(data: List<ActivityDetailData>) {
+    val scrollState = rememberScrollState()
     Card(elevation = CardDefaults.cardElevation(2.dp)) {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .horizontalScroll(scrollState)
+                .padding(16.dp)
+        ) {
             // Header
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                GridHeader(modifier = Modifier.weight(1.5f), text = "날짜")
-                GridHeader(modifier = Modifier.weight(1f), text = "걸음")
-                GridHeader(modifier = Modifier.weight(1f), text = "거리(km)")
-                GridHeader(modifier = Modifier.weight(1f), text = "칼로리")
+            Row(verticalAlignment = Alignment.Top) {
+                GridHeader(modifier = Modifier.width(120.dp), text = "날짜")
+                GridHeader(modifier = Modifier.width(100.dp), text = "걸음")
+                GridHeader(modifier = Modifier.width(100.dp), text = "거리(km)")
+                GridHeader(modifier = Modifier.width(100.dp), text = "칼로리")
+                GridHeader(modifier = Modifier.width(140.dp), text = "평균속도(km/h)")
             }
             Divider(modifier = Modifier.padding(vertical = 8.dp))
 
             // Data Rows
-            LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp)) {
-                items(data) { item ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        GridItem(modifier = Modifier.weight(1.5f), text = item.date.toFormattedDateString())
-                        GridItem(modifier = Modifier.weight(1f), text = item.steps.toString())
-                        GridItem(modifier = Modifier.weight(1f), text = String.format(Locale.US, "%.2f", item.distance))
-                        GridItem(modifier = Modifier.weight(1f), text = item.calories.toInt().toString())
-                    }
-                    Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+            data.forEach { item ->
+                Row(verticalAlignment = Alignment.Top) {
+                    GridItem(modifier = Modifier.width(120.dp), text = item.date.toFormattedDateString())
+                    GridItem(modifier = Modifier.width(100.dp), text = item.steps.toString())
+                    GridItem(modifier = Modifier.width(100.dp), text = String.format(Locale.US, "%.2f", item.distance))
+                    GridItem(modifier = Modifier.width(100.dp), text = item.calories.toInt().toString())
+                    GridItem(modifier = Modifier.width(140.dp), text = String.format(Locale.US, "%.2f", item.avgSpeed * 3.6))
                 }
+                Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
             }
         }
     }
@@ -318,7 +332,7 @@ fun GridHeader(modifier: Modifier = Modifier, text: String) {
         text = text,
         style = MaterialTheme.typography.labelLarge,
         fontWeight = FontWeight.Bold,
-        modifier = modifier,
+        modifier = modifier.padding(vertical = 8.dp),
         textAlign = TextAlign.Center
     )
 }
@@ -328,7 +342,7 @@ fun GridItem(modifier: Modifier = Modifier, text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.bodyMedium,
-        modifier = modifier,
+        modifier = modifier.padding(vertical = 8.dp),
         textAlign = TextAlign.Center
     )
 }

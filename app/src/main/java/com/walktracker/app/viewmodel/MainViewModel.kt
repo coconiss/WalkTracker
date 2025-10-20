@@ -25,6 +25,7 @@ data class MainUiState(
     val todayActivity: DailyActivity? = null,
     val weeklyActivity: List<DailyActivity> = emptyList(), // 주간 활동 데이터 추가
     val lastKnownLocation: Location? = null,
+    val currentSpeed: Float = 0.0f, // 현재 속도 (m/s)
     val isLoading: Boolean = false,
     val error: String? = null,
     val notificationEnabled: Boolean = true
@@ -60,6 +61,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val steps = intent.getLongExtra(LocationTrackingService.EXTRA_STEPS, 0L)
                 val distance = intent.getDoubleExtra(LocationTrackingService.EXTRA_DISTANCE, 0.0)
                 val calories = intent.getDoubleExtra(LocationTrackingService.EXTRA_CALORIES, 0.0)
+                val altitude = intent.getDoubleExtra(LocationTrackingService.EXTRA_ALTITUDE, 0.0) // 고도 데이터 수신
+                val speed = intent.getFloatExtra(LocationTrackingService.EXTRA_SPEED, 0.0f) // 속도 데이터 수신
 
                 // 실시간으로 UI 업데이트 (Firebase와 무관)
                 _uiState.update { currentState ->
@@ -69,9 +72,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )).copy(
                         steps = steps,
                         distance = distance,
-                        calories = calories
+                        calories = calories,
+                        altitude = altitude // 고도 데이터 업데이트
                     )
-                    currentState.copy(todayActivity = updatedActivity)
+                    currentState.copy(todayActivity = updatedActivity, currentSpeed = speed)
                 }
             }
         }
