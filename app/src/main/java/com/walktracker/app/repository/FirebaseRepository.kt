@@ -96,6 +96,7 @@ class FirebaseRepository {
         steps: Long,
         distance: Double,
         calories: Double,
+        altitude: Double, // 고도 파라미터 추가
         routes: List<RoutePoint> = emptyList()
     ): Result<Unit> = try {
         firestore.runTransaction { transaction ->
@@ -130,6 +131,7 @@ class FirebaseRepository {
                     "steps" to FieldValue.increment(steps),
                     "distance" to FieldValue.increment(distance),
                     "calories" to FieldValue.increment(calories),
+                    "altitude" to FieldValue.increment(altitude), // 고도 증가
                     "updatedAt" to Timestamp.now()
                 )
                 if (routes.isNotEmpty()) {
@@ -137,7 +139,7 @@ class FirebaseRepository {
                 }
                 transaction.update(activityDocRef, updates)
             } else {
-                val newActivity = DailyActivity(activityDocId, userId, date, steps, distance, calories, routes = routes)
+                val newActivity = DailyActivity(activityDocId, userId, date, steps, distance, calories, altitude = altitude, routes = routes)
                 transaction.set(activityDocRef, newActivity)
             }
 

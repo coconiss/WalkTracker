@@ -40,6 +40,7 @@ class LocationTrackingService : Service(), SensorEventListener {
     // 센서 매니저
     private lateinit var sensorManager: SensorManager
     private var stepSensor: Sensor? = null
+    private var pressureSensor: Sensor? = null // 기압 센서
 
     // 위치 클라이언트
     private lateinit var fusedLocationClient: FusedLocationProviderClient
@@ -52,12 +53,15 @@ class LocationTrackingService : Service(), SensorEventListener {
     private var stepsAtStartOfDay = 0L
     private var distanceAtStartOfDay = 0.0
     private var caloriesAtStartOfDay = 0.0
-    
+    private var altitudeAtStartOfDay = 0.0 // 오늘 시작 시점의 누적 고도
+
     // 이 서비스 세션에서만 유효한 값들
     private var initialStepCount = 0L // 재부팅 시 초기화되므로 영구 저장하지 않음
     private var currentSteps = 0L // 현재 서비스 세션 동안의 걸음 수
     private var totalDistance = 0.0 // 현재 서비스 세션 동안의 거리
     private var totalCalories = 0.0 // 현재 서비스 세션 동안의 칼로리
+    private var totalAltitudeGain = 0.0 // 현재 서비스 세션 동안의 누적 상승 고도
+    private var currentSpeed = 0.0f // 현재 속도(m/s)
     private var isInitialDataLoaded = false // Firestore에서 초기 데이터를 로드했는지 여부
     private var lastProcessedDate: String = "" // 날짜 변경을 감지하기 위한 변수
 
@@ -68,10 +72,13 @@ class LocationTrackingService : Service(), SensorEventListener {
 
     private val routePoints = mutableListOf<RoutePoint>()
 
+    private var lastPressureValue = 0f // 마지막으로 측정된 기압 값
+
     // 동기화 기준 값
     private var stepsSynced: Long = 0
     private var distanceSynced: Double = 0.0
     private var caloriesSynced: Double = 0.0
+    private var altitudeSynced: Double = 0.0 // 동기화된 마지막 고도
 
     private val activityTypeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -98,7 +105,7 @@ class LocationTrackingService : Service(), SensorEventListener {
         private const val CHANNEL_ID = "WalkTrackerChannel"
         private const val SYNC_INTERVAL = 60000L // 1분 //이후 1시간으로 변경 360000L
         private const val MIN_DISTANCE_THRESHOLD = 1.0 // 1m
-        private const val MAX_SPEED_MPS = 15.0
+        private const val MAX_SPEED_MPS = 20.0
         private const val ERROR_NOTIFICATION_ID = 1002
         private const val TAG = "LocationTrackingService"
 
@@ -106,6 +113,8 @@ class LocationTrackingService : Service(), SensorEventListener {
         const val EXTRA_STEPS = "extra_steps"
         const val EXTRA_DISTANCE = "extra_distance"
         const val EXTRA_CALORIES = "extra_calories"
+        const val EXTRA_ALTITUDE = "extra_altitude" // 고도 extra 추가
+        const val EXTRA_SPEED = "extra_speed"
 
         const val ACTION_LOCATION_UPDATE = "com.walktracker.app.LOCATION_UPDATE"
         const val ACTION_REQUEST_LOCATION_UPDATE = "com.walktracker.app.REQUEST_LOCATION_UPDATE"
@@ -122,18 +131,21 @@ class LocationTrackingService : Service(), SensorEventListener {
         Log.d(TAG, "서비스 생성됨 (onCreate)")
 
         syncPrefs = SharedPreferencesManager(this)
-        // initialStepCount는 영구 저장하지 않으므로 여기서 로드하는 코드를 제거합니다.
 
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
         if (stepSensor == null) {
             Log.w(TAG, "걸음수 측정 센서(STEP_COUNTER)가 이 기기에 없습니다.")
         }
+        // 기압 센서 초기화
+        pressureSensor = sensorManager.getDefaultSensor(Sensor.TYPE_PRESSURE)
+        if (pressureSensor == null) {
+            Log.w(TAG, "기압 센서(PRESSURE)가 이 기기에 없습니다.")
+        }
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         activityRecognitionClient = ActivityRecognition.getClient(this)
 
-        // 중요: UI 업데이트를 시작하기 전에 반드시 초기 데이터를 먼저 로드합니다.
         loadInitialDailyData()
         loadUserData()
 
@@ -142,6 +154,11 @@ class LocationTrackingService : Service(), SensorEventListener {
 
         stepSensor?.let {
             Log.d(TAG, "걸음수 센서 리스너 등록")
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+        }
+        // 기압 센서 리스너 등록
+        pressureSensor?.let {
+            Log.d(TAG, "기압 센서 리스너 등록")
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
         }
 
@@ -194,30 +211,38 @@ class LocationTrackingService : Service(), SensorEventListener {
         val stepsIncrement = currentSteps - stepsSynced
         val distanceIncrement = totalDistance - distanceSynced
         val caloriesIncrement = totalCalories - caloriesSynced
-        
-        Log.d(TAG, "계산된 증분: 걸음=$stepsIncrement, 거리=$distanceIncrement, 칼로리=$caloriesIncrement")
+        val altitudeIncrement = totalAltitudeGain - altitudeSynced // 고도 증가량
 
-        val (unsyncedSteps, unsyncedDistance, unsyncedCalories) = syncPrefs.getUnsyncedData()
-        Log.d(TAG, "가져온 미동기 데이터: 걸음=$unsyncedSteps, 거리=$unsyncedDistance, 칼로리=$unsyncedCalories")
+        Log.d(TAG, "계산된 증분: 걸음=$stepsIncrement, 거리=$distanceIncrement, 칼로리=$caloriesIncrement, 고도=$altitudeIncrement")
+
+        val unsyncedData = syncPrefs.getUnsyncedData()
+        val unsyncedSteps = unsyncedData["steps"] as? Long ?: 0L
+        val unsyncedDistance = unsyncedData["distance"] as? Double ?: 0.0
+        val unsyncedCalories = unsyncedData["calories"] as? Double ?: 0.0
+        val unsyncedAltitude = unsyncedData["altitude"] as? Double ?: 0.0
+
+        Log.d(TAG, "가져온 미동기 데이터: 걸음=$unsyncedSteps, 거리=$unsyncedDistance, 칼로리=$unsyncedCalories, 고도=$unsyncedAltitude")
 
         val totalStepsToSync = stepsIncrement + unsyncedSteps
         val totalDistanceToSync = distanceIncrement + unsyncedDistance
         val totalCaloriesToSync = caloriesIncrement + unsyncedCalories
+        val totalAltitudeToSync = altitudeIncrement + unsyncedAltitude
         val routesToSync = routePoints.toList()
-        
-        Log.d(TAG, "총 동기화할 데이터: 걸음=$totalStepsToSync, 거리=$totalDistanceToSync, 칼로리=$totalCaloriesToSync")
+
+        Log.d(TAG, "총 동기화할 데이터: 걸음=$totalStepsToSync, 거리=$totalDistanceToSync, 칼로리=$totalCaloriesToSync, 고도=$totalAltitudeToSync")
         val dateSync = dateFormat.format(Date())
 
-        if (totalStepsToSync > 0 || totalDistanceToSync > 0) {
+        if (totalStepsToSync > 0 || totalDistanceToSync > 0 || totalAltitudeToSync > 0) { // 조건에 고도 추가
             val result = repository.incrementDailyActivity(
                 userId = userId,
                 date = dateSync,
                 steps = totalStepsToSync,
                 distance = totalDistanceToSync,
                 calories = totalCaloriesToSync,
+                altitude = totalAltitudeToSync,
                 routes = routesToSync
             )
-            Log.d(TAG, "Firebase 동기화 시도 날짜=$dateSync,  걸음=$totalStepsToSync, 거리=${String.format(Locale.US, "%.5f", totalDistanceToSync)}km")
+            Log.d(TAG, "Firebase 동기화 시도 날짜=$dateSync,  걸음=$totalStepsToSync, 거리=${String.format(Locale.US, "%.5f", totalDistanceToSync)}km, 고도=${totalAltitudeToSync}m")
 
             if (result.isSuccess) {
                 Log.d(TAG, "Firebase 동기화 성공!")
@@ -225,7 +250,7 @@ class LocationTrackingService : Service(), SensorEventListener {
                 routePoints.clear()
             } else {
                 Log.e(TAG, "!!! Firebase 동기화 실패 !!!", result.exceptionOrNull())
-                syncPrefs.addUnsyncedData(stepsIncrement, distanceIncrement, caloriesIncrement)
+                syncPrefs.addUnsyncedData(stepsIncrement, distanceIncrement, caloriesIncrement, altitudeIncrement)
             }
         } else {
             Log.d(TAG, "동기화할 데이터가 없습니다. 동기화를 건너뜁니다.")
@@ -234,54 +259,59 @@ class LocationTrackingService : Service(), SensorEventListener {
         stepsSynced = currentSteps
         distanceSynced = totalDistance
         caloriesSynced = totalCalories
+        altitudeSynced = totalAltitudeGain // 동기화된 고도 업데이트
     }
 
-    // In onSensorChanged method
     override fun onSensorChanged(event: SensorEvent) {
-        if (event.sensor.type == Sensor.TYPE_STEP_COUNTER) {
-            val totalStepsFromBoot = event.values[0].toLong()
-            if (initialStepCount == 0L) {
-                initialStepCount = totalStepsFromBoot
-                Log.d(TAG, "초기 걸음 수 설정 (현재 세션): $initialStepCount")
+        when (event.sensor.type) {
+            Sensor.TYPE_STEP_COUNTER -> {
+                val totalStepsFromBoot = event.values[0].toLong()
+                if (initialStepCount == 0L) {
+                    initialStepCount = totalStepsFromBoot
+                    Log.d(TAG, "초기 걸음 수 설정 (현재 세션): $initialStepCount")
+                }
+                currentSteps = totalStepsFromBoot - initialStepCount
+                updateAndBroadcast()
             }
-            currentSteps = totalStepsFromBoot - initialStepCount
-
-            // 여기서 totalDistance를 계산하는 코드를 제거합니다.
-            // totalDistance = (currentSteps * userStride) / 1000.0
-
-            updateAndBroadcast() // 걸음수 변경을 UI에 알리기 위해 호출은 유지
+            Sensor.TYPE_PRESSURE -> {
+                val pressure = event.values[0]
+                if (lastPressureValue > 0) {
+                    // 이전 기압 값을 기준으로 현재 고도 변화를 계산합니다.
+                    val altitudeChange = SensorManager.getAltitude(lastPressureValue, pressure)
+                    // 상승 고도만 측정 (0.1m 이상 변화 감지)
+                    if (altitudeChange > 0.1) {
+                        totalAltitudeGain += altitudeChange
+                    }
+                }
+                lastPressureValue = pressure
+                updateAndBroadcast()
+            }
         }
     }
-
 
     private fun handleNewLocation(location: Location) {
         val currentDate = dateFormat.format(Date())
 
-        // ★★★★★ 날짜 변경 감지 및 처리 로직 ★★★★★
         if (lastProcessedDate.isNotEmpty() && lastProcessedDate != currentDate) {
             Log.d(TAG, "날짜가 $lastProcessedDate 에서 $currentDate 로 변경되었습니다. 데이터 동기화 및 세션 초기화를 수행합니다.")
-
-            // 날짜가 변경되었으므로 즉시 동기화를 실행하여 이전 날짜의 남은 데이터를 마무리합니다.
-            // (참고: syncToFirebase가 이전 날짜를 인자로 받도록 수정하면 더 완벽해집니다.)
             serviceScope.launch {
-                syncToFirebase() // 이전 날짜의 남은 데이터 동기화
+                syncToFirebase()
 
-                // 동기화 후, 모든 세션 관련 변수들을 0 또는 초기 상태로 리셋합니다.
                 Log.d(TAG, "세션 변수를 초기화합니다.")
                 initialStepCount = 0L
                 currentSteps = 0L
                 totalDistance = 0.0
                 totalCalories = 0.0
+                totalAltitudeGain = 0.0 // 고도 리셋
                 stepsSynced = 0L
                 distanceSynced = 0.0
                 caloriesSynced = 0.0
+                altitudeSynced = 0.0 // 동기화된 고도 리셋
                 routePoints.clear()
 
-                // DB로부터 새로운 날짜(오늘)의 데이터를 다시 로드합니다. (보통 0으로 시작)
                 loadInitialDailyData()
             }
         }
-        // 현재 처리 중인 날짜를 업데이트합니다.
         lastProcessedDate = currentDate
 
         previousLocation?.let { prev ->
@@ -296,13 +326,23 @@ class LocationTrackingService : Service(), SensorEventListener {
                 Log.d(TAG, "최대 속도($MAX_SPEED_MPS)를 초과하여 무시합니다: $speed m/s")
                 return@let
             }
+            currentSpeed = speed
 
-            // [수정됨] 센서 유무와 관계없이 항상 GPS 기반 거리를 누적합니다.
             totalDistance += distance / 1000.0
 
-            // [수정됨] 걸음수 센서가 없을 경우에만, GPS 거리 기반으로 걸음수를 역산합니다.
+            var altitudeChange = 0.0
+            if (location.hasAltitude() && prev.hasAltitude()) {
+                altitudeChange = location.altitude - prev.altitude
+                // 상승 고도만 측정 (0.5m 이상 변화 감지 - GPS 고도는 노이즈가 많으므로 임계값 설정)
+                if (altitudeChange > 0.5) {
+                    // 기압 센서가 없을 때만 GPS 기반으로 누적 상승 고도를 더합니다.
+                    if (pressureSensor == null) {
+                        totalAltitudeGain += altitudeChange
+                    }
+                }
+            }
+
             if (stepSensor == null) {
-                // 사용자의 보폭(stride)이 설정되어 있어야 의미가 있습니다.
                 if (userStride > 0) {
                     currentSteps = (totalDistance * 1000 / userStride).toLong()
                 }
@@ -312,15 +352,16 @@ class LocationTrackingService : Service(), SensorEventListener {
                 weightKg = userWeight,
                 speedMps = speed,
                 durationSeconds = timeDifferenceSeconds,
-                activityType = currentActivityType
+                activityType = currentActivityType,
+                elevationGainMeters = if (altitudeChange > 0) altitudeChange else 0.0
             )
             totalCalories += caloriesBurned
 
-            routePoints.add(RoutePoint(location.latitude, location.longitude, location.time, currentActivityType.name))
+            routePoints.add(RoutePoint(location.latitude, location.longitude, location.time, currentActivityType.name, speed.toDouble()))
             updateAndBroadcast()
         }
         previousLocation = location
-        broadcastLocationUpdate() // 새 위치를 즉시 브로드캐스트합니다.
+        broadcastLocationUpdate()
     }
     
     private fun updateAndBroadcast() {
@@ -336,11 +377,14 @@ class LocationTrackingService : Service(), SensorEventListener {
         val totalStepsToday = stepsAtStartOfDay + currentSteps
         val totalDistanceToday = distanceAtStartOfDay + totalDistance
         val totalCaloriesToday = caloriesAtStartOfDay + totalCalories
+        val totalAltitudeToday = altitudeAtStartOfDay + totalAltitudeGain // 오늘 총 상승 고도
 
         val intent = Intent(ACTION_ACTIVITY_UPDATE).apply {
             putExtra(EXTRA_STEPS, totalStepsToday)
             putExtra(EXTRA_DISTANCE, totalDistanceToday)
             putExtra(EXTRA_CALORIES, totalCaloriesToday)
+            putExtra(EXTRA_ALTITUDE, totalAltitudeToday) // 고도 데이터 추가
+            putExtra(EXTRA_SPEED, currentSpeed)
         }
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
     }
@@ -367,18 +411,18 @@ class LocationTrackingService : Service(), SensorEventListener {
         serviceScope.launch {
             val userId = repository.getCurrentUserId()
             if (userId == null) {
-                isInitialDataLoaded = true // 데이터를 로드할 수 없으므로, 바로 진행합니다.
+                isInitialDataLoaded = true
                 return@launch
             }
             val date = dateFormat.format(Date())
             repository.getDailyActivityOnce(userId, date) { activity ->
                 activity?.let {
-                    Log.d(TAG, "초기 데이터 로드 성공: 걸음=${it.steps}, 거리=${it.distance}, 칼로리=${it.calories}")
+                    Log.d(TAG, "초기 데이터 로드 성공: 걸음=${it.steps}, 거리=${it.distance}, 칼로리=${it.calories}, 고도=${it.altitude}")
                     stepsAtStartOfDay = it.steps
                     distanceAtStartOfDay = it.distance
                     caloriesAtStartOfDay = it.calories
+                    altitudeAtStartOfDay = it.altitude
                 }
-                // 데이터 로드가 완료되었으므로, UI 업데이트를 허용하고 현재 상태를 한번 전송합니다.
                 isInitialDataLoaded = true
                 updateAndBroadcast()
                 Log.d(TAG, "초기 데이터 로드 완료. UI 업데이트를 시작합니다.")
@@ -445,7 +489,12 @@ class LocationTrackingService : Service(), SensorEventListener {
     }
 
     private fun startActivityRecognition() {
-        val request = ActivityTransitionRequest(listOf(ActivityTransition.Builder().setActivityType(DetectedActivity.WALKING).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(), ActivityTransition.Builder().setActivityType(DetectedActivity.RUNNING).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(), ActivityTransition.Builder().setActivityType(DetectedActivity.IN_VEHICLE).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(), ActivityTransition.Builder().setActivityType(DetectedActivity.STILL).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build()))
+        val request = ActivityTransitionRequest(listOf(
+            ActivityTransition.Builder().setActivityType(DetectedActivity.WALKING).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(),
+            ActivityTransition.Builder().setActivityType(DetectedActivity.RUNNING).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(),
+            ActivityTransition.Builder().setActivityType(DetectedActivity.IN_VEHICLE).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(),
+            ActivityTransition.Builder().setActivityType(DetectedActivity.STILL).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build()
+        ))
         val intent = Intent(this, ActivityRecognitionReceiver::class.java)
         val pendingIntent = PendingIntent.getBroadcast(this, 0, intent, PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
