@@ -352,9 +352,9 @@ private fun AppInfoDialog(onDismiss: () -> Unit) {
             Column {
                 Text("WalkTracker v1.0.0")
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("개발자: Gemini")
+                Text("개발자: sdlee")
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("문의: gemini@google.com")
+                Text("문의: lsd9901@google.com")
             }
         },
         confirmButton = {

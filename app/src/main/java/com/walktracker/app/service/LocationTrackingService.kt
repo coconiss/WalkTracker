@@ -21,6 +21,7 @@ import androidx.core.app.NotificationCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.google.android.gms.location.*
 import com.walktracker.app.MainActivity
+import com.walktracker.app.R
 import com.walktracker.app.model.ActivityType
 import com.walktracker.app.model.RoutePoint
 import com.walktracker.app.repository.FirebaseRepository
@@ -95,7 +96,7 @@ class LocationTrackingService : Service(), SensorEventListener {
     companion object {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "WalkTrackerChannel"
-        private const val SYNC_INTERVAL = 60000L // 1분
+        private const val SYNC_INTERVAL = 60000L // 1분 //이후 1시간으로 변경 360000L
         private const val MIN_DISTANCE_THRESHOLD = 1.0 // 1m
         private const val MAX_SPEED_MPS = 15.0
         private const val ERROR_NOTIFICATION_ID = 1002
@@ -402,7 +403,7 @@ class LocationTrackingService : Service(), SensorEventListener {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("걷기 추적 중")
             .setContentText(String.format(Locale.US, "오늘: %d걸음 • %.2fkm", totalStepsToday, totalDistanceToday))
-            .setSmallIcon(android.R.drawable.ic_menu_compass)
+            .setSmallIcon(R.drawable.ic_splash_logo)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -413,7 +414,7 @@ class LocationTrackingService : Service(), SensorEventListener {
         val notification = NotificationCompat.Builder(this, "ErrorChannel")
             .setContentTitle("위치 추적 오류")
             .setContentText(message)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setSmallIcon(R.drawable.ic_splash_logo)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
         getSystemService(NotificationManager::class.java).notify(ERROR_NOTIFICATION_ID, notification)
