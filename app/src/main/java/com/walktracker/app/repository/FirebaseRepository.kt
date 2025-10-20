@@ -184,6 +184,20 @@ class FirebaseRepository {
             .addOnFailureListener { onComplete(null) }
     }
 
+    fun getWeeklyActivity(userId: String, dates: List<String>, onResult: (List<DailyActivity>) -> Unit) {
+        firestore.collection("daily_activities")
+            .whereEqualTo("userId", userId)
+            .whereIn("date", dates)
+            .get()
+            .addOnSuccessListener { documents ->
+                val activities = documents.toObjects(DailyActivity::class.java)
+                onResult(activities)
+            }
+            .addOnFailureListener {
+                onResult(emptyList())
+            }
+    }
+
     fun getUserActivitiesFlow(userId: String, limit: Int = 30): Flow<List<DailyActivity>> {
         return callbackFlow {
             val listener = activitiesCollection

@@ -4,7 +4,6 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -21,13 +20,17 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.walktracker.app.model.DailyActivity
 import com.walktracker.app.viewmodel.MainUiState
+import java.text.SimpleDateFormat
+import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
 fun MainScreen(
     uiState: MainUiState,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    onNavigateToDetails: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -81,8 +84,11 @@ fun MainScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // 주간 요약 (향후 구현)
-        WeeklySummaryCard()
+        // 주간 요약
+        WeeklySummaryCard(
+            weeklyData = uiState.weeklyActivity,
+            onDetailsClick = onNavigateToDetails
+        )
     }
 }
 
@@ -119,7 +125,7 @@ private fun StepsCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(280.dp),
+            .height(240.dp),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer
@@ -268,7 +274,10 @@ private fun StatCard(
 }
 
 @Composable
-private fun WeeklySummaryCard() {
+private fun WeeklySummaryCard(
+    weeklyData: List<DailyActivity>,
+    onDetailsClick: () -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp)
@@ -287,19 +296,69 @@ private fun WeeklySummaryCard() {
                     fontWeight = FontWeight.Bold
                 )
 
-                TextButton(onClick = { /* 상세보기 */ }) {
+                TextButton(onClick = onDetailsClick) {
                     Text("상세보기")
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // 간단한 막대 그래프 (향후 구현)
-            Text(
-                text = "주간 통계 그래프가 여기 표시됩니다",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-            )
+            // Bar chart
+            WeeklyBarChart(data = weeklyData)
+        }
+    }
+}
+
+@Composable
+fun WeeklyBarChart(data: List<DailyActivity>) {
+    val maxValue = data.maxOfOrNull { it.steps }?.toFloat() ?: 1f
+    val dayFormat = remember { SimpleDateFormat("EEE", Locale.KOREAN) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(180.dp), // 차트의 전체 높이를 180dp로 설정
+        horizontalArrangement = Arrangement.SpaceBetween,
+        // Row의 기본 정렬을 사용하고 Column 내부에서 정렬을 제어합니다.
+        verticalAlignment = Alignment.Top // Row의 정렬 기준을 상단으로 변경
+    ) {
+        data.forEach { activity ->
+            // 각 막대와 텍스트를 담는 Column
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .weight(1f) // 각 Column이 동일한 너비를 차지하도록 설정
+                    .fillMaxHeight() // Column이 Row의 전체 높이를 채우도록 설정
+            ) {
+                // 1. 막대를 그리는 공간 (가변 높이)
+                // Spacer에 weight(1f)를 주어 남은 공간을 모두 차지하게 하고,
+                // 그 안에서 Box를 하단 정렬하여 막대가 아래에서부터 자라나도록 합니다.
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(), // 너비 채우기
+                    contentAlignment = Alignment.BottomCenter // Box 내부의 content를 하단 중앙에 배치
+                ) {
+                    val barHeightRatio = (activity.steps.toFloat() / maxValue).coerceIn(0f, 1f)
+                    Box(
+                        modifier = Modifier
+                            .width(20.dp)
+                            .fillMaxHeight(barHeightRatio) // 상위 Box 높이의 비율만큼 막대 높이 설정
+                            .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
+                            .background(MaterialTheme.colorScheme.primary)
+                    )
+                }
+
+                // 2. 텍스트를 위한 공간 (고정 높이)
+                Spacer(modifier = Modifier.height(8.dp)) // 막대와 텍스트 사이의 고정 간격
+
+                // 요일 텍스트
+                Text(
+                    text = dayFormat.format(SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(activity.date)!!),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                )
+            }
         }
     }
 }

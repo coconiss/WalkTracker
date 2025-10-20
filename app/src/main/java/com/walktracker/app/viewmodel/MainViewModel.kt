@@ -23,6 +23,7 @@ import java.util.*
 data class MainUiState(
     val user: User? = null,
     val todayActivity: DailyActivity? = null,
+    val weeklyActivity: List<DailyActivity> = emptyList(), // 주간 활동 데이터 추가
     val lastKnownLocation: Location? = null,
     val isLoading: Boolean = false,
     val error: String? = null,
@@ -97,6 +98,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         loadUserData()
         loadInitialTodayActivity()
+        loadWeeklyActivity()
         loadNotificationSetting()
 
         val localBroadcastManager = LocalBroadcastManager.getInstance(application)
@@ -157,6 +159,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             // 이후로는 서비스에서 브로드캐스트하는 실시간 데이터를 사용
+        }
+    }
+    
+    private fun loadWeeklyActivity() {
+        viewModelScope.launch {
+            val userId = repository.getCurrentUserId() ?: return@launch
+            val calendar = Calendar.getInstance()
+            val dateList = (0..6).map {
+                dateFormat.format(calendar.time).also { calendar.add(Calendar.DATE, -1) }
+            }.reversed()
+
+            repository.getWeeklyActivity(userId, dateList) { activities ->
+                _uiState.update {
+                    val mergedActivities = dateList.map { date ->
+                        activities.find { it.date == date } ?: DailyActivity(
+                            userId = userId,
+                            date = date
+                        )
+                    }
+                    it.copy(weeklyActivity = mergedActivities)
+                }
+            }
         }
     }
 
@@ -225,6 +249,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshData() {
         loadUserData()
         loadInitialTodayActivity()
+        loadWeeklyActivity() // 새로고침 시 주간 데이터도 로드
         if (_rankingState.value.selectedPeriod != null) {
             loadRankings(_rankingState.value.selectedPeriod)
         }
