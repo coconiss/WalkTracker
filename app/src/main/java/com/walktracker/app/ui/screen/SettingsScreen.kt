@@ -11,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -21,12 +22,15 @@ fun SettingsScreen(
     user: User?,
     onWeightUpdate: (Double) -> Unit,
     onSignOut: () -> Unit,
+    onForceStop: () -> Unit,
+    onDeleteAccount: () -> Unit,
     notificationEnabled: Boolean,
     onNotificationChange: (Boolean) -> Unit
 ) {
     var showWeightDialog by remember { mutableStateOf(false) }
     var showPrivacyPolicyDialog by remember { mutableStateOf(false) }
     var showAppInfoDialog by remember { mutableStateOf(false) }
+    var showDeleteAccountDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -34,18 +38,11 @@ fun SettingsScreen(
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
-        // 프로필 섹션
         ProfileSection(user = user)
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // 개인 설정
-        Text(
-            text = "개인 설정",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
-        )
-
+        Text("개인 설정", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp))
         SettingItem(
             icon = Icons.Default.MonitorWeight,
             title = "체중 설정",
@@ -55,14 +52,7 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // 앱 설정
-        Text(
-            text = "앱 설정",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
-        )
-
-        // 알림 설정
+        Text("앱 설정", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp))
         SwitchSettingItem(
             icon = Icons.Default.Notifications,
             title = "목표 달성 알림",
@@ -70,16 +60,18 @@ fun SettingsScreen(
             checked = notificationEnabled,
             onCheckedChange = onNotificationChange
         )
-
-        // 개인정보 보호
+        SettingItem(
+            icon = Icons.Default.Cancel,
+            title = "백그라운드 동작 중지",
+            subtitle = "앱의 백그라운드 활동을 즉시 중지합니다.",
+            onClick = onForceStop
+        )
         SettingItem(
             icon = Icons.Default.Security,
             title = "개인정보 보호",
             subtitle = "데이터 관리 및 권한",
             onClick = { showPrivacyPolicyDialog = true }
         )
-
-        // 앱 정보
         SettingItem(
             icon = Icons.Default.Info,
             title = "앱 정보",
@@ -89,29 +81,34 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // 로그아웃
         OutlinedButton(
             onClick = onSignOut,
             modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = MaterialTheme.colorScheme.error
-            )
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary)
         ) {
             Icon(imageVector = Icons.Default.Logout, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
             Text("로그아웃")
         }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Button(
+            onClick = { showDeleteAccountDialog = true },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+        ) {
+            Icon(imageVector = Icons.Default.DeleteForever, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("회원 탈퇴")
+        }
     }
 
-    // 다이얼로그
     if (showWeightDialog) {
         WeightInputDialog(
             currentWeight = user?.weight ?: 70.0,
             onDismiss = { showWeightDialog = false },
-            onConfirm = {
-                onWeightUpdate(it)
-                showWeightDialog = false
-            }
+            onConfirm = { onWeightUpdate(it); showWeightDialog = false }
         )
     }
 
@@ -122,24 +119,40 @@ fun SettingsScreen(
     if (showAppInfoDialog) {
         AppInfoDialog(onDismiss = { showAppInfoDialog = false })
     }
+
+    if (showDeleteAccountDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteAccountDialog = false },
+            title = { Text("회원 탈퇴") },
+            text = { Text("모든 데이터는 즉시 삭제되고 복구할 수 없습니다. 정말 탈퇴하시겠습니까?") },
+            confirmButton = {
+                TextButton(
+                    onClick = { onDeleteAccount(); showDeleteAccountDialog = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("탈퇴")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteAccountDialog = false }) {
+                    Text("취소")
+                }
+            }
+        )
+    }
 }
 
 @Composable
-private fun ProfileSection(user: User?) { // ... (이전과 동일)
+private fun ProfileSection(user: User?) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer
-        )
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
+            modifier = Modifier.fillMaxWidth().padding(20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 프로필 아이콘
             Surface(
                 modifier = Modifier.size(64.dp),
                 shape = RoundedCornerShape(32.dp),
@@ -154,21 +167,11 @@ private fun ProfileSection(user: User?) { // ... (이전과 동일)
                     )
                 }
             }
-
             Spacer(modifier = Modifier.width(16.dp))
-
-            // 사용자 정보
             Column {
-                Text(
-                    text = user?.displayName ?: "사용자",
-                    style = MaterialTheme.typography.titleLarge
-                )
+                Text(text = user?.displayName ?: "사용자", style = MaterialTheme.typography.titleLarge)
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = user?.email ?: "",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                )
+                Text(text = user?.email ?: "", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f))
             }
         }
     }
@@ -176,7 +179,7 @@ private fun ProfileSection(user: User?) { // ... (이전과 동일)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingItem( // ... (이전과 동일)
+private fun SettingItem(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     subtitle: String,
@@ -186,45 +189,21 @@ private fun SettingItem( // ... (이전과 동일)
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(24.dp)
-            )
-
+            Icon(imageVector = icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
             Spacer(modifier = Modifier.width(16.dp))
-
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleSmall
-                )
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                )
+                Text(text = title, style = MaterialTheme.typography.titleSmall)
+                Text(text = subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
             }
-
-            Icon(
-                imageVector = Icons.Default.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-            )
+            Icon(imageVector = Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
         }
     }
-
     Spacer(modifier = Modifier.height(8.dp))
 }
 
@@ -240,35 +219,19 @@ private fun SwitchSettingItem(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         onClick = { onCheckedChange(!checked) }
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(24.dp)
-            )
-
+            Icon(imageVector = icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
             Spacer(modifier = Modifier.width(16.dp))
-
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = title, style = MaterialTheme.typography.titleSmall)
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                )
+                Text(text = subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
             }
-
             Switch(checked = checked, onCheckedChange = onCheckedChange)
         }
     }
@@ -276,7 +239,7 @@ private fun SwitchSettingItem(
 }
 
 @Composable
-private fun WeightInputDialog( // ... (이전과 동일)
+private fun WeightInputDialog(
     currentWeight: Double,
     onDismiss: () -> Unit,
     onConfirm: (Double) -> Unit
@@ -293,10 +256,7 @@ private fun WeightInputDialog( // ... (이전과 동일)
                 Spacer(modifier = Modifier.height(16.dp))
                 OutlinedTextField(
                     value = weightText,
-                    onValueChange = {
-                        weightText = it
-                        isError = false
-                    },
+                    onValueChange = { weightText = it; isError = false },
                     label = { Text("체중 (kg)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     isError = isError,
@@ -315,15 +275,9 @@ private fun WeightInputDialog( // ... (이전과 동일)
                         isError = true
                     }
                 }
-            ) {
-                Text("확인")
-            }
+            ) { Text("확인") }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("취소")
-            }
-        }
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } }
     )
 }
 
@@ -332,14 +286,8 @@ private fun PrivacyPolicyDialog(onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("개인정보 처리방침") },
-        text = {
-            Text(
-                "WalkTracker는 사용자의 위치 정보와 활동 데이터를 수집하여 걸음수, 이동 거리, 소모 칼로리를 계산하고, 이동 경로를 기록합니다. 이 정보는 개인 맞춤형 서비스 제공 및 통계 분석 목적으로만 사용되며, 사용자의 명시적인 동의 없이는 제3자에게 제공되지 않습니다. 수집된 데이터는 Firebase 서버에 안전하게 저장됩니다."
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("확인") }
-        }
+        text = { Text("WalkTracker는 사용자의 위치 정보와 활동 데이터를 수집하여 걸음수, 이동 거리, 소모 칼로리를 계산하고, 이동 경로를 기록합니다. 이 정보는 개인 맞춤형 서비스 제공 및 통계 분석 목적으로만 사용되며, 사용자의 명시적인 동의 없이는 제3자에게 제공되지 않습니다. 수집된 데이터는 Firebase 서버에 안전하게 저장됩니다.") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("확인") } }
     )
 }
 
@@ -357,8 +305,6 @@ private fun AppInfoDialog(onDismiss: () -> Unit) {
                 Text("문의: lsd9901@google.com")
             }
         },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("확인") }
-        }
+        confirmButton = { TextButton(onClick = onDismiss) { Text("확인") } }
     )
 }
