@@ -73,7 +73,7 @@ class LocationTrackingService : Service(), SensorEventListener {
     private val routePoints = mutableListOf<RoutePoint>()
 
     private var lastPressureValue = 0f // 마지막으로 측정된 기압 값
-    private var lastAltitude: Float? = null // 마지막으로 이동이 감지된 지점의 고도
+    private var pressureAtPreviousLocation: Float? = null // 마지막으로 이동이 감지된 지점의 기압 값
 
     // 동기화 기준 값
     private var stepsSynced: Long = 0
@@ -218,13 +218,15 @@ class LocationTrackingService : Service(), SensorEventListener {
         }
     }
 
-    private suspend fun syncToFirebase() {
+    private suspend fun syncToFirebase(dateToSync: String? = null) {
         val userId = repository.getCurrentUserId()
         if (userId == null) {
             Log.e(TAG, "사용자 ID가 없어 동기화할 수 없습니다. 동기화를 건너뜁니다.")
             return
         }
-        Log.d(TAG, "동기화 시작. 사용자 ID: $userId")
+        val date = dateToSync ?: dateFormat.format(Date())
+
+        Log.d(TAG, "동기화 시작. 사용자 ID: $userId, 날짜: $date")
 
         val stepsIncrement = currentSteps - stepsSynced
         val distanceIncrement = totalDistance - distanceSynced
@@ -248,19 +250,18 @@ class LocationTrackingService : Service(), SensorEventListener {
         val routesToSync = routePoints.toList()
 
         Log.d(TAG, "총 동기화할 데이터: 걸음=$totalStepsToSync, 거리=$totalDistanceToSync, 칼로리=$totalCaloriesToSync, 고도=$totalAltitudeToSync")
-        val dateSync = dateFormat.format(Date())
 
         if (totalStepsToSync > 0 || routesToSync.isNotEmpty()) { // 조건 수정: 걸음수 또는 새로운 경로 지점이 있을 때만 동기화
             val result = repository.incrementDailyActivity(
                 userId = userId,
-                date = dateSync,
+                date = date,
                 steps = totalStepsToSync,
                 distance = totalDistanceToSync,
                 calories = totalCaloriesToSync,
                 altitude = totalAltitudeToSync,
                 routes = routesToSync
             )
-            Log.d(TAG, "Firebase 동기화 시도 날짜=$dateSync,  걸음=$totalStepsToSync, 거리=${String.format(Locale.US, "%.5f", totalDistanceToSync)}km, 고도=${totalAltitudeToSync}m")
+            Log.d(TAG, "Firebase 동기화 시도 날짜=$date,  걸음=$totalStepsToSync, 거리=${String.format(Locale.US, "%.5f", totalDistanceToSync)}km, 고도=${totalAltitudeToSync}m")
 
             if (result.isSuccess) {
                 Log.d(TAG, "Firebase 동기화 성공!")
@@ -281,8 +282,8 @@ class LocationTrackingService : Service(), SensorEventListener {
     }
 
     override fun onSensorChanged(event: SensorEvent) {
-        if (currentActivityType == ActivityType.VEHICLE) {
-            Log.d(TAG, "차량 탑승 중이므로 센서 데이터를 무시합니다.")
+        if (currentActivityType == ActivityType.VEHICLE || currentActivityType == ActivityType.STILL) {
+            Log.d(TAG, "차량 탑승 또는 정지 중이므로 센서 데이터를 무시합니다.")
             return
         }
         when (event.sensor.type) {
@@ -305,8 +306,8 @@ class LocationTrackingService : Service(), SensorEventListener {
     }
 
     private fun handleNewLocation(location: Location) {
-        if (currentActivityType == ActivityType.VEHICLE) {
-            Log.d(TAG, "차량 탑승 중이므로 위치 업데이트를 이용한 계산을 건너뜁니다.")
+        if (currentActivityType == ActivityType.VEHICLE || currentActivityType == ActivityType.STILL) {
+            Log.d(TAG, "차량 탑승 또는 정지 중이므로 위치 업데이트를 이용한 계산을 건너뜁니다.")
             previousLocation = location // 다음 계산을 위해 이전 위치는 업데이트
             return
         }
@@ -316,7 +317,7 @@ class LocationTrackingService : Service(), SensorEventListener {
         if (lastProcessedDate.isNotEmpty() && lastProcessedDate != currentDate) {
             Log.d(TAG, "날짜가 $lastProcessedDate 에서 $currentDate 로 변경되었습니다. 데이터 동기화 및 세션 초기화를 수행합니다.")
             serviceScope.launch {
-                syncToFirebase()
+                syncToFirebase(lastProcessedDate) // 이전 날짜로 데이터 동기화
                 resetTodayData()
                 loadInitialDailyData()
             }
@@ -344,15 +345,19 @@ class LocationTrackingService : Service(), SensorEventListener {
             // 실제 위치 이동이 감지되었을 때만 고도 변화를 계산합니다.
             if (pressureSensor != null && lastPressureValue > 0f) {
                 // 기압 센서를 이용한 고도 계산
-                val currentAltitude = SensorManager.getAltitude(SensorManager.PRESSURE_STANDARD_ATMOSPHERE, lastPressureValue)
-                lastAltitude?.let { lastAlt ->
-                    val change = (currentAltitude - lastAlt).toDouble()
-                    if (change > 0.2) { // 기압 센서 민감도를 고려하여 0.2m 이상 상승 시에만 반영
-                        totalAltitudeGain += change
-                        altitudeChange = change
+                pressureAtPreviousLocation?.let { prevPressure ->
+                    val pressureDifference = Math.abs(lastPressureValue - prevPressure)
+                    if (pressureDifference > 0.12f) { // 0.12hPa 이상 변화 시 고도 변화 계산
+                        val currentAltitude = SensorManager.getAltitude(SensorManager.PRESSURE_STANDARD_ATMOSPHERE, lastPressureValue)
+                        val previousAltitude = SensorManager.getAltitude(SensorManager.PRESSURE_STANDARD_ATMOSPHERE, prevPressure)
+                        val change = (currentAltitude - previousAltitude).toDouble()
+                        if (change > 0) { // 상승 고도만 반영
+                            totalAltitudeGain += change
+                            altitudeChange = change
+                        }
                     }
                 }
-                lastAltitude = currentAltitude
+                pressureAtPreviousLocation = lastPressureValue
             } else if (location.hasAltitude() && prev.hasAltitude()) {
                 // GPS를 이용한 고도 계산 (Fallback)
                 val change = location.altitude - prev.altitude
@@ -408,7 +413,7 @@ class LocationTrackingService : Service(), SensorEventListener {
         // 센서 관련 값
         initialStepCount = 0L // 다음 onSensorChanged에서 다시 설정됨
         lastPressureValue = 0f
-        lastAltitude = null // 고도 리셋
+        pressureAtPreviousLocation = null // 고도 계산을 위한 이전 위치의 기압 리셋
 
         // 위치 및 경로
         previousLocation = null
