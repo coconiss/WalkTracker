@@ -1,4 +1,3 @@
-
 package com.walktracker.app
 
 import android.Manifest
@@ -50,9 +49,12 @@ class MainActivity : ComponentActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        if (permissions.values.all { it }) {
+        val allGranted = permissions.values.all { it }
+        if (allGranted) {
+            Log.d(TAG, "모든 권한이 허용되었습니다. 추적 서비스를 시작합니다.")
             startTrackingService()
         } else {
+            Log.w(TAG, "일부 권한이 거부되었습니다. 권한 안내 다이얼로그를 표시합니다.")
             showPermissionDialog()
         }
     }
@@ -60,12 +62,14 @@ class MainActivity : ComponentActivity() {
     private val settingsLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
+        Log.d(TAG, "설정 화면에서 돌아왔습니다. 권한을 다시 확인합니다.")
         requestPermissions()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        Log.d(TAG, "onCreate: 액티비티 생성")
 
         auth = FirebaseAuth.getInstance()
         MobileAds.initialize(this) {}
@@ -76,22 +80,36 @@ class MainActivity : ComponentActivity() {
                 val (startDestination, setStartDestination) = remember { mutableStateOf<String?>(null) }
 
                 LaunchedEffect(auth) {
-                    setStartDestination(if (auth.currentUser != null) "main" else "login")
+                    val currentUser = auth.currentUser
+                    setStartDestination(if (currentUser != null) "main" else "login")
                 }
 
                 if (startDestination != null) {
-                    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
                         NavHost(navController = navController, startDestination = startDestination) {
                             composable("login") {
-                                LoginScreen(navController = navController) {
-                                    requestPermissions()
-                                    navController.navigate("main") { popUpTo("login") { inclusive = true } }
-                                }
+                                LoginScreen(
+                                    navController = navController,
+                                    onLoginSuccess = {
+                                        requestPermissions()
+                                        navController.navigate("main") {
+                                            popUpTo("login") { inclusive = true }
+                                        }
+                                    }
+                                )
                             }
                             composable("signup") {
-                                SignUpScreen(navController = navController) {
-                                    navController.navigate("login") { popUpTo("signup") { inclusive = true } }
-                                }
+                                SignUpScreen(
+                                    navController = navController,
+                                    onSignUpSuccess = {
+                                        navController.navigate("login") {
+                                            popUpTo("signup") { inclusive = true }
+                                        }
+                                    }
+                                )
                             }
                             composable("main") {
                                 val mainViewModel: MainViewModel = viewModel()
@@ -99,15 +117,16 @@ class MainActivity : ComponentActivity() {
                                     viewModel = mainViewModel,
                                     onSignOut = {
                                         auth.signOut()
-                                        stopService(Intent(this@MainActivity, LocationTrackingService::class.java))
-                                        navController.navigate("login") { popUpTo("main") { inclusive = true } }
+                                        stopTrackingService()
+                                        navController.navigate("login") {
+                                            popUpTo("main") { inclusive = true }
+                                        }
                                     },
-                                    onForceStop = {
-                                        stopService(Intent(this@MainActivity, LocationTrackingService::class.java))
-                                        finishAffinity()
-                                        exitProcess(0)
+                                    onForceQuit = {
+                                        stopTrackingService()
+                                        finishAffinity() // 모든 액티비티 종료
+                                        exitProcess(0) // 프로세스 강제 종료
                                     },
-                                    onDeleteAccount = { mainViewModel.deleteAccount() },
                                     navController = navController
                                 )
                             }
@@ -120,9 +139,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        // 앱이 사용자에게 보여질 때 권한을 확인합니다.
+        // onResume 대신 onStart를 사용하여 권한 요청 무한 루프를 방지합니다.
         if (auth.currentUser != null) {
             requestPermissions()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // onStart와 settingsLauncher에서 권한을 처리하므로 여기서는 호출하지 않습니다.
     }
 
     private fun showPermissionDialog() {
@@ -135,34 +161,64 @@ class MainActivity : ComponentActivity() {
                 }
                 settingsLauncher.launch(intent)
             }
-            .setNegativeButton("거부") { _, _ -> finish() }
+            .setNegativeButton("거부") { _, _ ->
+                finish() // Exit the app
+            }
             .setCancelable(false)
             .show()
     }
 
     private fun requestPermissions() {
         val permissions = mutableListOf(
-            Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.BODY_SENSORS, Manifest.permission.ACTIVITY_RECOGNITION
-        ).apply {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.BODY_SENSORS,
+            Manifest.permission.ACTIVITY_RECOGNITION
+        )
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            permissions.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         }
 
-        if (permissions.any { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        val needsPermission = permissions.any {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (needsPermission) {
+            Log.d(TAG, "필요한 권한이 없어 요청합니다.")
             permissionLauncher.launch(permissions.toTypedArray())
         } else {
+            Log.d(TAG, "모든 권한이 이미 허용되어 있습니다. 바로 서비스를 시작합니다.")
             startTrackingService()
         }
     }
 
     private fun startTrackingService() {
+        Log.d(TAG, "startTrackingService: 서비스 시작 시도")
         val serviceIntent = Intent(this, LocationTrackingService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent)
         } else {
             startService(serviceIntent)
         }
+
+        getSharedPreferences("WalkTrackerPrefs", MODE_PRIVATE)
+            .edit()
+            .putBoolean("tracking_enabled", true)
+            .apply()
+    }
+
+    private fun stopTrackingService() {
+        Log.d(TAG, "stopTrackingService: 서비스 중지")
+        stopService(Intent(this, LocationTrackingService::class.java))
+    }
+
+    companion object {
+        private const val TAG = "MainActivity"
     }
 }
 
@@ -170,20 +226,12 @@ class MainActivity : ComponentActivity() {
 fun MainApp(
     viewModel: MainViewModel,
     onSignOut: () -> Unit,
-    onForceStop: () -> Unit,
-    onDeleteAccount: () -> Unit,
+    onForceQuit: () -> Unit, // 강제 종료 콜백 추가
     navController: NavHostController
 ) {
     val appNavController = rememberNavController()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val rankingState by viewModel.rankingState.collectAsStateWithLifecycle()
-    val accountDeleted by viewModel.accountDeleted.collectAsStateWithLifecycle(initialValue = false)
-
-    if (accountDeleted) {
-        LaunchedEffect(Unit) {
-            navController.navigate("login") { popUpTo("main") { inclusive = true } }
-        }
-    }
 
     Scaffold(
         bottomBar = {
@@ -193,7 +241,11 @@ fun MainApp(
             }
         }
     ) { paddingValues ->
-        NavHost(navController = appNavController, startDestination = "home", modifier = Modifier.padding(paddingValues)) {
+        NavHost(
+            navController = appNavController,
+            startDestination = "home",
+            modifier = Modifier.padding(paddingValues)
+        ) {
             composable("home") {
                 MainScreen(
                     uiState = uiState,
@@ -207,27 +259,34 @@ fun MainApp(
             }
             composable("map") {
                 MapScreen(
-                    routePoints = uiState.todayRoutes, // 수정
+                    routePoints = emptyList(),
                     lastKnownLocation = uiState.lastKnownLocation,
                     onLocationRequest = { viewModel.requestLocationUpdate() }
                 )
             }
             composable("ranking") {
-                LaunchedEffect(Unit) { viewModel.loadRankings(RankingPeriod.DAILY) }
+                LaunchedEffect(Unit) {
+                    viewModel.loadRankings(RankingPeriod.DAILY)
+                }
                 RankingScreen(
                     rankingState = rankingState,
-                    onPeriodChange = { viewModel.loadRankings(it) }
+                    onPeriodChange = { period ->
+                        viewModel.loadRankings(period)
+                    }
                 )
             }
             composable("settings") {
                 SettingsScreen(
                     user = uiState.user,
-                    onWeightUpdate = { viewModel.updateUserWeight(it) },
+                    onWeightUpdate = {
+                        viewModel.updateUserWeight(it)
+                    },
                     onSignOut = onSignOut,
-                    onForceStop = onForceStop,
-                    onDeleteAccount = onDeleteAccount,
                     notificationEnabled = uiState.notificationEnabled,
-                    onNotificationChange = { viewModel.setNotificationEnabled(it) }
+                    onNotificationChange = {
+                        viewModel.setNotificationEnabled(it)
+                    },
+                    onForceQuit = onForceQuit // 콜백 전달
                 )
             }
         }
@@ -242,13 +301,17 @@ fun BottomNavigationBar(navController: NavHostController) {
         NavigationItem("ranking", "랭킹", Icons.Default.EmojiEvents),
         NavigationItem("settings", "설정", Icons.Default.Settings)
     )
+
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    NavigationBar(tonalElevation = 8.dp) {
+    NavigationBar(
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 8.dp
+    ) {
         items.forEach { item ->
             NavigationBarItem(
-                icon = { Icon(item.icon, contentDescription = item.label) },
+                icon = { Icon(imageVector = item.icon, contentDescription = item.label) },
                 label = { Text(item.label) },
                 selected = currentRoute == item.route,
                 onClick = {
@@ -265,10 +328,22 @@ fun BottomNavigationBar(navController: NavHostController) {
 
 @Composable
 fun AdMobBanner() {
+    val context = LocalContext.current
     AndroidView(
-        factory = { AdView(it).apply { setAdSize(AdSize.BANNER); adUnitId = "ca-app-pub-3940256099942544/6300978111"; loadAd(AdRequest.Builder().build()) } },
+        factory = {
+            AdView(context).apply {
+                setAdSize(AdSize.BANNER)
+                adUnitId = "ca-app-pub-3940256099942544/6300978111" // Test ID
+                loadAd(AdRequest.Builder().build())
+            }
+        },
         modifier = Modifier.fillMaxWidth().height(50.dp)
     )
 }
 
-data class NavigationItem(val route: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
+
+data class NavigationItem(
+    val route: String,
+    val label: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector
+)

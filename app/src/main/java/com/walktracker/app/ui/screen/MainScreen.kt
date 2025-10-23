@@ -33,30 +33,28 @@ fun MainScreen(
     uiState: MainUiState,
     onRefresh: () -> Unit,
     onNavigateToDetails: () -> Unit,
-    onResetTodayActivity: () -> Unit // 추가: 초기화 콜백
+    onResetTodayActivity: () -> Unit // 오늘 데이터 초기화 콜백 추가
 ) {
     val scrollState = rememberScrollState()
-    val (showResetDialog, setShowResetDialog) = remember { mutableStateOf(false) }
+    var showResetDialog by remember { mutableStateOf(false) }
 
     if (showResetDialog) {
         AlertDialog(
-            onDismissRequest = { setShowResetDialog(false) },
+            onDismissRequest = { showResetDialog = false },
             title = { Text("기록 초기화") },
-            text = { Text("정말 오늘 걷기 기록을 삭제하시겠습니까?") },
+            text = { Text("정말 오늘의 걸음 기록을 초기화 하시겠습니까? 이 작업은 되돌릴 수 없습니다.") },
             confirmButton = {
                 TextButton(
                     onClick = {
                         onResetTodayActivity()
-                        setShowResetDialog(false)
+                        showResetDialog = false
                     }
                 ) {
                     Text("확인")
                 }
             },
             dismissButton = {
-                TextButton(
-                    onClick = { setShowResetDialog(false) }
-                ) {
+                TextButton(onClick = { showResetDialog = false }) {
                     Text("취소")
                 }
             }
@@ -77,18 +75,21 @@ fun MainScreen(
             .padding(16.dp)
             .verticalScroll(scrollState)
     ) {
+        // 상단 인사말
         GreetingSection(userName = uiState.user?.displayName ?: "사용자")
 
         Spacer(modifier = Modifier.height(24.dp))
 
+        // 메인 걸음수 카드
         StepsCard(
             steps = uiState.todayActivity?.steps ?: 0L,
             goal = 10000L,
-            onResetClick = { setShowResetDialog(true) } // 변경: 다이얼로그 표시
+            onResetClick = { showResetDialog = true } // 리셋 버튼 클릭 시 다이얼로그 표시
         )
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // 통계 카드들
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -112,32 +113,34 @@ fun MainScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(12.dp)) // 카드 사이 간격 추가
 
+        // 고도 및 속도 정보 카드
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             StatCard(
                 modifier = Modifier.weight(1f),
-                icon = Icons.Default.Terrain, 
+                icon = Icons.Default.Terrain, // 고도 아이콘
                 label = "상승 고도",
                 value = String.format("%.1f", uiState.todayActivity?.altitude ?: 0.0),
                 unit = "m",
-                color = Color(0xFF3F51B5)
+                color = Color(0xFF3F51B5) // Indigo 색상
             )
             StatCard(
                 modifier = Modifier.weight(1f),
-                icon = Icons.Default.Speed,
+                icon = Icons.Default.Speed, // 속도 아이콘
                 label = "현재 속도",
                 value = String.format("%.1f", uiState.currentSpeed * 3.6),
                 unit = "km/h",
-                color = Color(0xFF009688)
+                color = Color(0xFF009688) // Teal 색상
             )
         }
 
         Spacer(modifier = Modifier.height(24.dp))
 
+        // 주간 요약
         WeeklySummaryCard(
             weeklyData = uiState.weeklyActivity,
             onDetailsClick = onNavigateToDetails
@@ -165,10 +168,11 @@ private fun GreetingSection(userName: String) {
 private fun StepsCard(
     steps: Long,
     goal: Long,
-    onResetClick: () -> Unit // 추가: 초기화 클릭 콜백
+    onResetClick: () -> Unit // 리셋 콜백 추가
 ) {
     val progress = (steps.toFloat() / goal.toFloat()).coerceIn(0f, 1f)
 
+    // 애니메이션
     val animatedProgress by animateFloatAsState(
         targetValue = progress,
         animationSpec = tween(durationMillis = 1000, easing = EaseOutCubic),
@@ -186,12 +190,28 @@ private fun StepsCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize()
         ) {
-            Column(
-                modifier = Modifier.align(Alignment.Center),
-                horizontalAlignment = Alignment.CenterHorizontally
+            // 리셋 버튼
+            IconButton(
+                onClick = onResetClick,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
             ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "오늘 기록 초기화",
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                )
+            }
+
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center // 컨텐츠 중앙 정렬
+            ) {
+                // 원형 프로그레스
                 CircularProgressIndicator(
                     progress = animatedProgress,
                     steps = steps,
@@ -204,19 +224,6 @@ private fun StepsCard(
                     text = "오늘의 걸음",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                )
-            }
-            
-            IconButton(
-                onClick = onResetClick,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(12.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Refresh,
-                    contentDescription = "초기화",
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                 )
             }
         }
@@ -233,6 +240,7 @@ private fun CircularProgressIndicator(
         modifier = Modifier.size(180.dp),
         contentAlignment = Alignment.Center
     ) {
+        // 배경 원
         Canvas(modifier = Modifier.fillMaxSize()) {
             drawArc(
                 color = Color.Gray.copy(alpha = 0.1f),
@@ -244,6 +252,7 @@ private fun CircularProgressIndicator(
             )
         }
 
+        // 진행 원
         Canvas(modifier = Modifier.fillMaxSize()) {
             drawArc(
                 brush = Brush.sweepGradient(
@@ -261,6 +270,7 @@ private fun CircularProgressIndicator(
             )
         }
 
+        // 중앙 텍스트
         Column(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -365,6 +375,7 @@ private fun WeeklySummaryCard(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Bar chart
             WeeklyBarChart(data = weeklyData)
         }
     }
@@ -372,43 +383,50 @@ private fun WeeklySummaryCard(
 
 @Composable
 fun WeeklyBarChart(data: List<DailyActivity>) {
-    val maxValue = (data.maxOfOrNull { it.steps }?.toFloat() ?: 1f).coerceAtLeast(1f)
+    val maxValue = data.maxOfOrNull { it.steps }?.toFloat() ?: 1f
     val dayFormat = remember { SimpleDateFormat("EEE", Locale.KOREAN) }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(180.dp),
+            .height(180.dp), // 차트의 전체 높이를 180dp로 설정
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.Top
+        // Row의 기본 정렬을 사용하고 Column 내부에서 정렬을 제어합니다.
+        verticalAlignment = Alignment.Top // Row의 정렬 기준을 상단으로 변경
     ) {
         data.forEach { activity ->
+            // 각 막대와 텍스트를 담는 Column
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
+                    .weight(1f) // 각 Column이 동일한 너비를 차지하도록 설정
+                    .fillMaxHeight() // Column이 Row의 전체 높이를 채우도록 설정
             ) {
+                // 1. 막대를 그리는 공간 (가변 높이)
+                // Spacer에 weight(1f)를 주어 남은 공간을 모두 차지하게 하고,
+                // 그 안에서 Box를 하단 정렬하여 막대가 아래에서부터 자라나도록 합니다.
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxWidth(),
-                    contentAlignment = Alignment.BottomCenter
+                        .fillMaxWidth(), // 너비 채우기
+                    contentAlignment = Alignment.BottomCenter // Box 내부의 content를 하단 중앙에 배치
                 ) {
                     val barHeightRatio = (activity.steps.toFloat() / maxValue).coerceIn(0f, 1f)
                     Box(
                         modifier = Modifier
                             .width(20.dp)
-                            .fillMaxHeight(barHeightRatio)
+                            .fillMaxHeight(barHeightRatio) // 상위 Box 높이의 비율만큼 막대 높이 설정
                             .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
                             .background(MaterialTheme.colorScheme.primary)
                     )
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                // 2. 텍스트를 위한 공간 (고정 높이)
+                Spacer(modifier = Modifier.height(8.dp)) // 막대와 텍스트 사이의 고정 간격
 
+                // 요일 텍스트
                 Text(
-                    text = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(activity.date)?.let { dayFormat.format(it) } ?: "",
+                    text = dayFormat.format(SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(activity.date)!!),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
                 )
