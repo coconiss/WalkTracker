@@ -17,6 +17,7 @@ object CalorieCalculator {
             ActivityType.STILL -> 1.0 // 휴식
             ActivityType.WALKING -> {
                 when {
+                    speedMps < 0.5 -> 1.0 // 사실상 가만히..(~1.8 km/h 미만)
                     speedMps < 0.9 -> 2.0 // 매우 느린 걸음 (~3.2 km/h 미만)
                     speedMps < 1.3 -> 3.5 // 보통 걸음 (~4.7 km/h 미만)
                     speedMps < 1.8 -> 5.0 // 빠른 걸음 (~6.5 km/h 미만)
@@ -64,17 +65,17 @@ object CalorieCalculator {
         val caloriesPerMinute = (met * 3.5 * weightKg) / 200.0
         val horizontalCalories = caloriesPerMinute * durationMinutes
 
-        // 상승에 대한 추가 칼로리 계산
+        // 상승에 대한 추가 칼로리 계산(고도계 고치기 전 까지는 사용 못함)
         // 일(J) = m * g * h. 칼로리(kcal) = J / 4184.
         // 인체 효율 20% 가정 시: (m * g * h) / (4184 * 0.20)
         // = (weightKg * 9.8 * elevationGainMeters) / 836.8
         // = weightKg * elevationGainMeters * 0.0117
-        val verticalCalories = if (elevationGainMeters > 0) {
-            weightKg * elevationGainMeters * 0.0117
-        } else {
-            0.0
-        }
+        //val verticalCalories = if (elevationGainMeters > 0) {
+        //    weightKg * elevationGainMeters * 0.0117
+        //} else {
+        //    0.0
+        //}
 
-        return horizontalCalories + verticalCalories
+        return horizontalCalories //+ verticalCalories
     }
 }

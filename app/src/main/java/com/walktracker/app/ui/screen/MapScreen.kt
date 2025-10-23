@@ -47,7 +47,7 @@ private fun getColorForSpeed(speed: Double): Int {
     return when {
         speed < 0.8 -> android.graphics.Color.BLUE // 느림 (~3 km/h)
         speed < 1.25 -> android.graphics.Color.GREEN // 보통 (~4.5 km/h)
-        speed < 1.53 -> android.graphics.Color.YELLOW // 빠름 (~5.5 km/h)
+        speed < 1.80 -> android.graphics.Color.YELLOW // 빠름 (~5.5 km/h)
         speed < 2.2 -> android.graphics.Color.MAGENTA // 매우 빠름 (~8 km/h)
         else -> android.graphics.Color.RED // 달리기 (8 km/h ~)
     }
@@ -355,8 +355,8 @@ private fun SpeedLegend(modifier: Modifier = Modifier) {
     val legendItems = listOf(
         "느림 (< 3 km/h)" to Color.Blue,
         "보통 (3-4.5 km/h)" to Color.Green,
-        "빠름 (4.5-5.5 km/h)" to Color.Yellow,
-        "매우 빠름 (5.5-8 km/h)" to Color.Magenta,
+        "빠름 (4.5-6.4 km/h)" to Color.Yellow,
+        "매우 빠름 (6.4-8 km/h)" to Color.Magenta,
         "달리기 (8 km/h <)" to Color.Red
     )
 
