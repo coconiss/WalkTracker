@@ -115,9 +115,10 @@ class LocationTrackingService : Service(), SensorEventListener {
     companion object {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "WalkTrackerChannel"
-        private const val SYNC_INTERVAL = 60000L // 1분 //이후 1시간으로 변경 360000L
+        private const val SYNC_INTERVAL = 600000L // 10분 //이후 상황에 맞게 변경
         private const val MIN_DISTANCE_THRESHOLD = 1.0 // 1m
         private const val MAX_SPEED_MPS = 6.5 //(약 23.4km/h)
+        private const val MAX_TIME_DIFFERENCE_SECONDS = 15L // 15초. 위치 업데이트 간 최대 허용 시간
         private const val ERROR_NOTIFICATION_ID = 1002
         private const val TAG = "LocationTrackingService"
 
@@ -328,10 +329,16 @@ class LocationTrackingService : Service(), SensorEventListener {
             val timeDifferenceSeconds = (location.time - prev.time) / 1000
             if (timeDifferenceSeconds <= 0) return@let
 
+            // 시간 간격이 너무 길면(예: 지하철 이동) 위치를 무시
+            if (timeDifferenceSeconds > MAX_TIME_DIFFERENCE_SECONDS) {
+                Log.d(TAG, "위치 업데이트 시간 간격이 너무 깁니다(${timeDifferenceSeconds}초). 위치 처리를 건너뛰고 현재 위치를 시작점으로 설정합니다.")
+                return@let
+            }
+
             val distance = prev.distanceTo(location)
             if (distance < MIN_DISTANCE_THRESHOLD) return@let
 
-            val speed = if (location.hasSpeed()) location.speed else distance / timeDifferenceSeconds
+            val speed = if (location.hasSpeed()) location.speed else (distance / timeDifferenceSeconds).toFloat()
             if (speed > MAX_SPEED_MPS) {
                 Log.d(TAG, "최대 속도($MAX_SPEED_MPS)를 초과하여 무시합니다: $speed m/s")
                 return@let
