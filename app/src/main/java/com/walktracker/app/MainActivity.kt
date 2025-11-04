@@ -139,22 +139,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        // 앱이 사용자에게 보여질 때 권한을 확인합니다.
-        // onResume 대신 onStart를 사용하여 권한 요청 무한 루프를 방지합니다.
         if (auth.currentUser != null) {
             requestPermissions()
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        // onStart와 settingsLauncher에서 권한을 처리하므로 여기서는 호출하지 않습니다.
-    }
-
     private fun showPermissionDialog() {
         AlertDialog.Builder(this)
             .setTitle("권한 안내 (필수)")
-            .setMessage("앱의 핵심 기능을 사용하려면 필수 권한을 허용해야 합니다. '허용' 버튼을 눌러 설정 화면으로 이동한 후, 모든 권한을 허용해주세요.")
+            .setMessage("앱의 핵심 기능을 사용하려면 필수 권한을 허용해야 합니다. \'허용\' 버튼을 눌러 설정 화면으로 이동한 후, 모든 권한을 허용해주세요.")
             .setPositiveButton("허용") { _, _ ->
                 val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                     data = Uri.fromParts("package", packageName, null)
@@ -233,6 +226,8 @@ fun MainApp(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val rankingState by viewModel.rankingState.collectAsStateWithLifecycle()
 
+    // ViewModel이 Broadcast를 수신하므로 UI에서는 별도 처리가 필요 없음
+
     Scaffold(
         bottomBar = {
             Column {
@@ -259,7 +254,7 @@ fun MainApp(
             }
             composable("map") {
                 MapScreen(
-                    routePoints = emptyList(),
+                    routePoints = emptyList(), // 경로 데이터는 ViewModel에서 관리하도록 수정 필요
                     lastKnownLocation = uiState.lastKnownLocation,
                     onLocationRequest = { viewModel.requestLocationUpdate() }
                 )
@@ -333,7 +328,8 @@ fun AdMobBanner() {
         factory = {
             AdView(context).apply {
                 setAdSize(AdSize.BANNER)
-                adUnitId = "ca-app-pub-3245182432537705~5352561340" // Test ID
+                // 앱 ID가 아닌 테스트용 배너 단위 ID를 사용해야 합니다.
+                adUnitId = "ca-app-pub-3940256099942544/6300978111" // Test Banner ID
                 loadAd(AdRequest.Builder().build())
             }
         },

@@ -13,7 +13,6 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.location.Location
-import android.os.Build
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
@@ -30,6 +29,7 @@ import com.walktracker.app.util.SharedPreferencesManager
 import kotlinx.coroutines.*
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.abs
 
 class LocationTrackingService : Service(), SensorEventListener {
 
@@ -84,11 +84,15 @@ class LocationTrackingService : Service(), SensorEventListener {
     private val activityTypeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val typeString = intent?.getStringExtra(ActivityRecognitionReceiver.EXTRA_ACTIVITY_TYPE)
-            currentActivityType = when (typeString) {
+            val newActivityType = when (typeString) {
                 "WALKING" -> ActivityType.WALKING
                 "RUNNING" -> ActivityType.RUNNING
                 "VEHICLE" -> ActivityType.VEHICLE
                 else -> ActivityType.STILL
+            }
+            if (newActivityType != currentActivityType) {
+                currentActivityType = newActivityType
+                updateLocationRequest()
             }
         }
     }
@@ -115,11 +119,12 @@ class LocationTrackingService : Service(), SensorEventListener {
     companion object {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "WalkTrackerChannel"
-        private const val SYNC_INTERVAL = 600000L // 10분 //이후 상황에 맞게 변경
+        private const val SYNC_INTERVAL = 600000L // 10분
         private const val MIN_DISTANCE_THRESHOLD = 1.0 // 1m
         private const val MAX_SPEED_MPS = 6.5 //(약 23.4km/h)
-        private const val MAX_TIME_DIFFERENCE_SECONDS = 15L // 15초. 위치 업데이트 간 최대 허용 시간
-        private const val ERROR_NOTIFICATION_ID = 1002
+        private const val MIN_WALKING_SPEED_MPS = 0.75f // 최소 걷기 속도 (m/s)
+        private const val MAX_TIME_DIFFERENCE_SECONDS = 30L // 15초. 위치 업데이트 간 최대 허용 시간
+        private const val MIN_ACCURACY_METERS = 30f // 최소 GPS 정확도 (미터) - 실내 테스트를 위해 30m로 완화
         private const val TAG = "LocationTrackingService"
 
         const val ACTION_ACTIVITY_UPDATE = "com.walktracker.app.ACTIVITY_UPDATE"
@@ -168,12 +173,12 @@ class LocationTrackingService : Service(), SensorEventListener {
 
         stepSensor?.let {
             Log.d(TAG, "걸음수 센서 리스너 등록")
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
         // 기압 센서 리스너 등록
         pressureSensor?.let {
             Log.d(TAG, "기압 센서 리스너 등록")
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
 
         val localBroadcastManager = LocalBroadcastManager.getInstance(this)
@@ -192,7 +197,7 @@ class LocationTrackingService : Service(), SensorEventListener {
 
         startLocationTracking()
         startActivityRecognition()
-        startPeriodicSync()
+        startPeriodicSync() // WorkManager 대신 자체 동기화 로직 실행
     }
 
     override fun onDestroy() {
@@ -252,7 +257,7 @@ class LocationTrackingService : Service(), SensorEventListener {
 
         Log.d(TAG, "총 동기화할 데이터: 걸음=$totalStepsToSync, 거리=$totalDistanceToSync, 칼로리=$totalCaloriesToSync, 고도=$totalAltitudeToSync")
 
-        if (totalStepsToSync > 0 || routesToSync.isNotEmpty()) { // 조건 수정: 걸음수 또는 새로운 경로 지점이 있을 때만 동기화
+        if (totalStepsToSync > 0 || totalDistanceToSync > 0 || routesToSync.isNotEmpty()) { // 동기화 조건 강화
             val result = repository.incrementDailyActivity(
                 userId = userId,
                 date = date,
@@ -267,7 +272,12 @@ class LocationTrackingService : Service(), SensorEventListener {
             if (result.isSuccess) {
                 Log.d(TAG, "Firebase 동기화 성공!")
                 syncPrefs.clearUnsyncedData()
-                routePoints.clear()
+                routePoints.clear() // 동기화 성공 시 경로 데이터 초기화
+                // 동기화된 값을 현재 값으로 갱신
+                stepsSynced = currentSteps
+                distanceSynced = totalDistance
+                caloriesSynced = totalCalories
+                altitudeSynced = totalAltitudeGain
             } else {
                 Log.e(TAG, "!!! Firebase 동기화 실패 !!!", result.exceptionOrNull())
                 syncPrefs.addUnsyncedData(stepsIncrement, distanceIncrement, caloriesIncrement, altitudeIncrement)
@@ -275,11 +285,6 @@ class LocationTrackingService : Service(), SensorEventListener {
         } else {
             Log.d(TAG, "동기화할 데이터가 없습니다. 동기화를 건너뜁니다.")
         }
-
-        stepsSynced = currentSteps
-        distanceSynced = totalDistance
-        caloriesSynced = totalCalories
-        altitudeSynced = totalAltitudeGain // 동기화된 고도 업데이트
     }
 
     override fun onSensorChanged(event: SensorEvent) {
@@ -307,6 +312,16 @@ class LocationTrackingService : Service(), SensorEventListener {
     }
 
     private fun handleNewLocation(location: Location) {
+        // 1. 정확도 필터링: 정확도가 너무 낮으면, 속도가 0에 가까울 때만 무시
+        if (location.hasAccuracy() && location.accuracy > MIN_ACCURACY_METERS) {
+            if(location.speed < 0.1f) { // 속도가 거의 0이면 무시
+                Log.d(TAG, "GPS 정확도가 낮고(${location.accuracy}m) 속도가 0에 가까워 위치 계산을 건너뜁니다.")
+                previousLocation = location
+                return
+            }
+        }
+
+        // 2. 활동 유형 필터링
         if (currentActivityType == ActivityType.VEHICLE || currentActivityType == ActivityType.STILL) {
             Log.d(TAG, "차량 탑승 또는 정지 중이므로 위치 업데이트를 이용한 계산을 건너뜁니다.")
             previousLocation = location // 다음 계산을 위해 이전 위치는 업데이트
@@ -329,31 +344,35 @@ class LocationTrackingService : Service(), SensorEventListener {
             val timeDifferenceSeconds = (location.time - prev.time) / 1000
             if (timeDifferenceSeconds <= 0) return@let
 
-            // 시간 간격이 너무 길면(예: 지하철 이동) 위치를 무시
             if (timeDifferenceSeconds > MAX_TIME_DIFFERENCE_SECONDS) {
                 Log.d(TAG, "위치 업데이트 시간 간격이 너무 깁니다(${timeDifferenceSeconds}초). 위치 처리를 건너뛰고 현재 위치를 시작점으로 설정합니다.")
+                previousLocation = location // 시작점 갱신
                 return@let
             }
 
             val distance = prev.distanceTo(location)
             if (distance < MIN_DISTANCE_THRESHOLD) return@let
 
-            val speed = if (location.hasSpeed()) location.speed else (distance / timeDifferenceSeconds).toFloat()
+            val speed = if (location.hasSpeed()) location.speed else (distance / timeDifferenceSeconds)
             if (speed > MAX_SPEED_MPS) {
                 Log.d(TAG, "최대 속도($MAX_SPEED_MPS)를 초과하여 무시합니다: $speed m/s")
+                previousLocation = location // 시작점 갱신
                 return@let
             }
             currentSpeed = speed
 
+            if (currentActivityType == ActivityType.WALKING && speed < MIN_WALKING_SPEED_MPS) {
+                Log.d(TAG, "걸음으로 인식되었으나 속도(${speed}m/s)가 너무 낮아 정지 상태로 간주하고 계산을 건너뜁니다.")
+                previousLocation = location // 시작점 갱신
+                return@let
+            }
+
             totalDistance += distance / 1000.0
 
             var altitudeChange = 0.0
-            // 고도 변화 계산: 기압 센서가 있으면 우선 사용하고, 없으면 GPS 고도를 사용합니다.
-            // 실제 위치 이동이 감지되었을 때만 고도 변화를 계산합니다.
             if (pressureSensor != null && lastPressureValue > 0f) {
-                // 기압 센서를 이용한 고도 계산
                 pressureAtPreviousLocation?.let { prevPressure ->
-                    val pressureDifference = Math.abs(lastPressureValue - prevPressure)
+                    val pressureDifference = abs(lastPressureValue - prevPressure)
                     if (pressureDifference > 0.12f) { // 0.12hPa 이상 변화 시 고도 변화 계산
                         val currentAltitude = SensorManager.getAltitude(SensorManager.PRESSURE_STANDARD_ATMOSPHERE, lastPressureValue)
                         val previousAltitude = SensorManager.getAltitude(SensorManager.PRESSURE_STANDARD_ATMOSPHERE, prevPressure)
@@ -366,7 +385,6 @@ class LocationTrackingService : Service(), SensorEventListener {
                 }
                 pressureAtPreviousLocation = lastPressureValue
             } else if (location.hasAltitude() && prev.hasAltitude()) {
-                // GPS를 이용한 고도 계산 (Fallback)
                 val change = location.altitude - prev.altitude
                 if (change > 0.5) { // GPS 고도 노이즈를 고려하여 0.5m 이상 상승 시에만 반영
                     totalAltitudeGain += change
@@ -523,28 +541,36 @@ class LocationTrackingService : Service(), SensorEventListener {
             .build()
     }
 
-    private fun showErrorNotification(message: String) {
-        val notification = NotificationCompat.Builder(this, "ErrorChannel")
-            .setContentTitle("위치 추적 오류")
-            .setContentText(message)
-            .setSmallIcon(R.drawable.ic_splash_logo)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .build()
-        getSystemService(NotificationManager::class.java).notify(ERROR_NOTIFICATION_ID, notification)
-    }
-
     private fun updateNotification() {
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, createNotification())
     }
 
     private fun startLocationTracking() {
-        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 10000L).apply {
-            setMinUpdateIntervalMillis(5000L)
-            setMaxUpdateDelayMillis(15000L)
+        updateLocationRequest()
+    }
+
+    private fun updateLocationRequest() {
+        if (currentActivityType == ActivityType.VEHICLE) {
+            fusedLocationClient.removeLocationUpdates(locationCallback)
+            Log.d(TAG, "차량 탑승 상태이므로 위치 업데이트를 중단합니다.")
+            return
+        }
+
+        val (priority, interval) = when (currentActivityType) {
+            ActivityType.RUNNING -> Priority.PRIORITY_HIGH_ACCURACY to 5000L // 5초
+            ActivityType.WALKING -> Priority.PRIORITY_HIGH_ACCURACY to 10000L // 10초
+            ActivityType.STILL -> Priority.PRIORITY_BALANCED_POWER_ACCURACY to 60000L // 1분
+            else -> Priority.PRIORITY_BALANCED_POWER_ACCURACY to 60000L // 기본값 (정지 상태와 동일)
+        }
+
+        val locationRequest = LocationRequest.Builder(priority, interval).apply {
+            setMinUpdateIntervalMillis(interval / 2)
+            setMaxUpdateDelayMillis(interval * 2)
         }.build()
 
         try {
             fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
+            Log.d(TAG, "활동 상태($currentActivityType)에 따라 위치 요청을 업데이트했습니다. priority=$priority, interval=$interval")
         } catch (e: SecurityException) {
             Log.e(TAG, "위치 정보 접근 권한이 없습니다.", e)
             stopSelf()

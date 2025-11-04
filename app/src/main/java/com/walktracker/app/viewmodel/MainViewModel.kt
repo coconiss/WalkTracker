@@ -26,9 +26,9 @@ data class MainUiState(
     val weeklyActivity: List<DailyActivity> = emptyList(), // 주간 활동 데이터 추가
     val lastKnownLocation: Location? = null,
     val currentSpeed: Float = 0.0f, // 현재 속도 (m/s)
-    val isLoading: Boolean = false,
+    val isLoading: Boolean = true,
     val error: String? = null,
-    val notificationEnabled: Boolean = true
+    val notificationEnabled: Boolean = true,
 )
 
 data class RankingUiState(
@@ -36,7 +36,8 @@ data class RankingUiState(
     val userRank: Int? = null,
     val isLoading: Boolean = false,
     val selectedPeriod: RankingPeriod = RankingPeriod.DAILY,
-    val error: String? = null
+    val error: String? = null,
+    val lastUpdated: Long = 0L // 데이터 마지막 업데이트 시간
 )
 
 enum class RankingPeriod {
@@ -55,28 +56,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _rankingState = MutableStateFlow(RankingUiState())
     val rankingState: StateFlow<RankingUiState> = _rankingState.asStateFlow()
 
+    // 5분 캐시
+    private val CACHE_DURATION_MS = 5 * 60 * 1000
+
     private val activityUpdateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == LocationTrackingService.ACTION_ACTIVITY_UPDATE) {
                 val steps = intent.getLongExtra(LocationTrackingService.EXTRA_STEPS, 0L)
                 val distance = intent.getDoubleExtra(LocationTrackingService.EXTRA_DISTANCE, 0.0)
                 val calories = intent.getDoubleExtra(LocationTrackingService.EXTRA_CALORIES, 0.0)
-                val altitude = intent.getDoubleExtra(LocationTrackingService.EXTRA_ALTITUDE, 0.0) // 고도 데이터 수신
-                val speed = intent.getFloatExtra(LocationTrackingService.EXTRA_SPEED, 0.0f) // 속도 데이터 수신
-
-                // 실시간으로 UI 업데이트 (Firebase와 무관)
-                _uiState.update { currentState ->
-                    val updatedActivity = (currentState.todayActivity ?: DailyActivity(
-                        userId = repository.getCurrentUserId() ?: "",
-                        date = dateFormat.format(Date())
-                    )).copy(
-                        steps = steps,
-                        distance = distance,
-                        calories = calories,
-                        altitude = altitude // 고도 데이터 업데이트
-                    )
-                    currentState.copy(todayActivity = updatedActivity, currentSpeed = speed)
-                }
+                val altitude = intent.getDoubleExtra(LocationTrackingService.EXTRA_ALTITUDE, 0.0)
+                val speed = intent.getFloatExtra(LocationTrackingService.EXTRA_SPEED, 0.0f)
+                updateActivityData(steps, distance, calories, altitude, speed)
             }
         }
     }
@@ -90,37 +81,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     @Suppress("DEPRECATION")
                     intent.getParcelableExtra(LocationTrackingService.EXTRA_LOCATION)
                 }
-                location?.let {
-                    _uiState.update { currentState ->
-                        currentState.copy(lastKnownLocation = it)
-                    }
-                }
+                location?.let { updateLocation(it) }
             }
         }
     }
 
     init {
         loadUserData()
-        loadInitialTodayActivity()
+        loadInitialTodayActivity() // 삭제: 서비스에서 보내주는 실시간 데이터로만 상태를 업데이트하여 데이터 덮어쓰기 방지
         loadWeeklyActivity()
         loadNotificationSetting()
-
-        val localBroadcastManager = LocalBroadcastManager.getInstance(application)
-
-        localBroadcastManager.registerReceiver(
-            activityUpdateReceiver,
-            IntentFilter(LocationTrackingService.ACTION_ACTIVITY_UPDATE)
-        )
-        localBroadcastManager.registerReceiver(
-            locationUpdateReceiver,
-            IntentFilter(LocationTrackingService.ACTION_LOCATION_UPDATE)
-        )
-
+        registerReceivers()
         requestLocationUpdate()
     }
 
     override fun onCleared() {
         super.onCleared()
+        unregisterReceivers()
+    }
+
+    fun updateActivityData(steps: Long, distance: Double, calories: Double, altitude: Double, speed: Float) {
+        _uiState.update { currentState ->
+            val updatedActivity = (currentState.todayActivity ?: DailyActivity(
+                userId = repository.getCurrentUserId() ?: "",
+                date = dateFormat.format(Date())
+            )).copy(
+                steps = steps,
+                distance = distance,
+                calories = calories,
+                altitude = altitude
+            )
+            currentState.copy(todayActivity = updatedActivity, currentSpeed = speed)
+        }
+    }
+
+    fun updateLocation(location: Location) {
+        _uiState.update { it.copy(lastKnownLocation = location) }
+    }
+
+    private fun registerReceivers() {
+        val localBroadcastManager = LocalBroadcastManager.getInstance(getApplication())
+        val activityFilter = IntentFilter(LocationTrackingService.ACTION_ACTIVITY_UPDATE)
+        val locationFilter = IntentFilter(LocationTrackingService.ACTION_LOCATION_UPDATE)
+        localBroadcastManager.registerReceiver(activityUpdateReceiver, activityFilter)
+        localBroadcastManager.registerReceiver(locationUpdateReceiver, locationFilter)
+    }
+
+    private fun unregisterReceivers() {
         val localBroadcastManager = LocalBroadcastManager.getInstance(getApplication())
         localBroadcastManager.unregisterReceiver(activityUpdateReceiver)
         localBroadcastManager.unregisterReceiver(locationUpdateReceiver)
@@ -151,18 +158,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadInitialTodayActivity() {
+        // 이미 데이터가 있다면 실행하지 않음 (실시간 데이터 보호)
+        if (_uiState.value.todayActivity != null) {
+            return
+        }
+
         viewModelScope.launch {
             val userId = repository.getCurrentUserId() ?: return@launch
             val today = dateFormat.format(Date())
 
-            // Firebase에서 오늘 데이터 로드 (서비스 시작 전 마지막 동기화된 데이터)
             repository.getDailyActivityOnce(userId, today) { activity ->
+                // 이 함수는 이제 새로고침 시에만 사용
                 if (activity != null) {
                     _uiState.update { it.copy(todayActivity = activity) }
                 }
             }
-
-            // 이후로는 서비스에서 브로드캐스트하는 실시간 데이터를 사용
         }
     }
 
@@ -202,13 +212,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 altitude = 0.0
             )
 
-            // Firebase 데이터 초기화
             repository.updateDailyActivity(userId, today, resetActivity)
 
-            // UI 즉시 업데이트
             _uiState.update { it.copy(todayActivity = resetActivity, currentSpeed = 0f) }
 
-            // LocationTrackingService에 데이터 리셋 요청
             val intent = Intent(LocationTrackingService.ACTION_RESET_TODAY_DATA)
             LocalBroadcastManager.getInstance(getApplication()).sendBroadcast(intent)
         }
@@ -226,6 +233,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadRankings(period: RankingPeriod) {
         viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val lastUpdated = _rankingState.value.lastUpdated
+            val isCacheValid = (now - lastUpdated) < CACHE_DURATION_MS
+
+            // 캐시가 유효하고, 요청 기간이 현재 기간과 같으면 로직을 실행하지 않음
+            if (isCacheValid && _rankingState.value.selectedPeriod == period) {
+                return@launch
+            }
+
             _rankingState.update { it.copy(isLoading = true, selectedPeriod = period, error = null) }
 
             try {
@@ -240,7 +256,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     userRank = if (userInList != null) {
                         userInList.rank
                     } else {
-                        // 리스트에 없으면 별도로 조회
                         repository.getUserRank(periodStr, periodKey)
                     }
                 }
@@ -250,7 +265,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         rankings = rankings,
                         userRank = userRank,
                         isLoading = false,
-                        error = null
+                        error = null,
+                        lastUpdated = System.currentTimeMillis() // 업데이트 시간 기록
                     )
                 }
             } catch (e: Exception) {
@@ -278,11 +294,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshData() {
         loadUserData()
-        loadInitialTodayActivity()
-        loadWeeklyActivity() // 새로고침 시 주간 데이터도 로드
-        if (_rankingState.value.selectedPeriod != null) {
-            loadRankings(_rankingState.value.selectedPeriod)
-        }
+        loadInitialTodayActivity() // 사용자가 직접 새로고침할 때만 동기화된 데이터 로드
+        loadWeeklyActivity()
+        // 랭킹 새로고침 시에는 캐시를 무시하고 새로 불러오도록 lastUpdated를 0으로 설정
+        _rankingState.update { it.copy(lastUpdated = 0L) }
+        loadRankings(_rankingState.value.selectedPeriod)
     }
 
     fun requestLocationUpdate() {
