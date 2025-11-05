@@ -6,6 +6,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.SetOptions
 import com.walktracker.app.model.*
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -22,6 +23,21 @@ class FirebaseRepository {
     private val activitiesCollection = firestore.collection("daily_activities")
     private val rankingsCollection = firestore.collection("rankings")
 
+    // 랭킹 배치 업데이트를 위한 큐
+    private val pendingRankingUpdates = mutableMapOf<String, RankingUpdate>()
+
+    data class RankingUpdate(
+        val userId: String,
+        val displayName: String,
+        val distance: Double,
+        val period: String,
+        val periodKey: String
+    )
+
+    companion object {
+        private const val TAG = "FirebaseRepository"
+    }
+
     // --- Authentication --- //
 
     fun getCurrentUserId(): String? = auth.currentUser?.uid
@@ -29,7 +45,7 @@ class FirebaseRepository {
     suspend fun signUpWithEmailPassword(email: String, password: String, weight: Double): Result<Unit> {
         return try {
             val authResult = auth.createUserWithEmailAndPassword(email, password).await()
-            val firebaseUser = authResult.user ?: throw IllegalStateException("FirebaseUser is null after creation")
+            val firebaseUser = authResult.user ?: throw IllegalStateException("FirebaseUser is null")
 
             val newUser = User(
                 userId = firebaseUser.uid,
@@ -99,80 +115,120 @@ class FirebaseRepository {
         }
     }
 
-
     suspend fun incrementDailyActivity(
         userId: String,
         date: String,
         steps: Long,
         distance: Double,
         calories: Double,
-        altitude: Double, // 고도 파라미터 추가
+        altitude: Double,
         routes: List<RoutePoint> = emptyList()
     ): Result<Unit> = try {
+        var totalDistance = 0.0
+        var userName = ""
+
         firestore.runTransaction { transaction ->
-            // --- 1. 모든 읽기 작업 ---
             val userRef = usersCollection.document(userId)
             val user = transaction.get(userRef).toObject(User::class.java)
-                ?: throw IllegalStateException("User with ID $userId not found.")
+                ?: throw IllegalStateException("User not found")
+            userName = user.displayName
 
             val activityDocId = "${userId}_$date"
             val activityDocRef = activitiesCollection.document(activityDocId)
             val activitySnapshot = transaction.get(activityDocRef)
 
-            // 랭킹 문서도 미리 읽기
-            val calendar = Calendar.getInstance().apply {
-                time = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(date)!!
-            }
-            val periods = mapOf(
-                "daily" to date,
-                "monthly" to String.format("%04d-%02d", calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH) + 1),
-                "yearly" to calendar.get(Calendar.YEAR).toString()
-            )
-            val rankingRefsAndSnapshots = periods.map { (period, periodKey) ->
-                val rankingDocId = "${period}_${periodKey}_${user.userId}"
-                val rankingRef = rankingsCollection.document(rankingDocId)
-                val rankingSnapshot = transaction.get(rankingRef)
-                Triple(rankingRef, rankingSnapshot, period to periodKey)
-            }
-
-            // --- 2. 모든 쓰기 작업 ---
             if (activitySnapshot.exists()) {
                 val updates = mutableMapOf<String, Any>(
                     "steps" to FieldValue.increment(steps),
                     "distance" to FieldValue.increment(distance),
                     "calories" to FieldValue.increment(calories),
-                    "altitude" to FieldValue.increment(altitude), // 고도 증가
+                    "altitude" to FieldValue.increment(altitude),
                     "updatedAt" to Timestamp.now()
                 )
                 if (routes.isNotEmpty()) {
                     updates["routes"] = FieldValue.arrayUnion(*routes.toTypedArray())
                 }
                 transaction.update(activityDocRef, updates)
+                totalDistance = (activitySnapshot.getDouble("distance") ?: 0.0) + distance
             } else {
-                val newActivity = DailyActivity(activityDocId, userId, date, steps, distance, calories, altitude = altitude, routes = routes)
+                val newActivity = DailyActivity(
+                    activityDocId, userId, date, steps, distance, calories,
+                    altitude = altitude, routes = routes
+                )
                 transaction.set(activityDocRef, newActivity)
-            }
-
-            // 랭킹 업데이트
-            rankingRefsAndSnapshots.forEach { (rankingRef, rankingSnapshot, periodInfo) ->
-                val (period, periodKey) = periodInfo
-                if (rankingSnapshot.exists()) {
-                    transaction.update(rankingRef, "distance", FieldValue.increment(distance))
-                } else {
-                    val newRanking = RankingEntry(
-                        userId = user.userId,
-                        displayName = user.displayName,
-                        distance = distance,
-                        period = period,
-                        periodKey = periodKey
-                    )
-                    transaction.set(rankingRef, newRanking)
-                }
+                totalDistance = distance
             }
         }.await()
+
+        // 랭킹 업데이트를 큐에 추가
+        queueRankingUpdate(userId, userName, totalDistance, date)
+
         Result.success(Unit)
     } catch (e: Exception) {
+        Log.e(TAG, "incrementDailyActivity 실패", e)
         Result.failure(e)
+    }
+
+    private fun queueRankingUpdate(userId: String, displayName: String, distance: Double, date: String) {
+        try {
+            val calendar = Calendar.getInstance().apply {
+                time = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(date)!!
+            }
+
+            val periods = listOf(
+                "daily" to date,
+                "monthly" to String.format(
+                    "%04d-%02d",
+                    calendar.get(Calendar.YEAR),
+                    calendar.get(Calendar.MONTH) + 1
+                ),
+                "yearly" to calendar.get(Calendar.YEAR).toString()
+            )
+
+            periods.forEach { (period, periodKey) ->
+                val key = "${period}_${periodKey}_${userId}"
+                pendingRankingUpdates[key] = RankingUpdate(
+                    userId = userId,
+                    displayName = displayName,
+                    distance = distance,
+                    period = period,
+                    periodKey = periodKey
+                )
+            }
+
+            Log.d(TAG, "랭킹 업데이트 큐에 추가: ${pendingRankingUpdates.size}개")
+        } catch (e: Exception) {
+            Log.e(TAG, "랭킹 큐 추가 실패", e)
+        }
+    }
+
+    suspend fun flushRankingUpdates(): Result<Unit> {
+        if (pendingRankingUpdates.isEmpty()) {
+            return Result.success(Unit)
+        }
+
+        return try {
+            firestore.runBatch { batch ->
+                pendingRankingUpdates.forEach { (key, update) ->
+                    val docRef = rankingsCollection.document(key)
+                    batch.set(docRef, mapOf(
+                        "userId" to update.userId,
+                        "displayName" to update.displayName,
+                        "distance" to update.distance,
+                        "period" to update.period,
+                        "periodKey" to update.periodKey,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    ), SetOptions.merge())
+                }
+            }.await()
+
+            Log.d(TAG, "랭킹 배치 업데이트 완료: ${pendingRankingUpdates.size}개")
+            pendingRankingUpdates.clear()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "랭킹 배치 업데이트 실패", e)
+            Result.failure(e)
+        }
     }
 
     fun getDailyActivity(userId: String, date: String): Flow<DailyActivity?> {
@@ -221,7 +277,9 @@ class FirebaseRepository {
                         close(error)
                         return@addSnapshotListener
                     }
-                    val activities = snapshot?.documents?.mapNotNull { it.toObject(DailyActivity::class.java) } ?: emptyList()
+                    val activities = snapshot?.documents?.mapNotNull {
+                        it.toObject(DailyActivity::class.java)
+                    } ?: emptyList()
                     trySend(activities)
                 }
             awaitClose { listener.remove() }
@@ -231,7 +289,7 @@ class FirebaseRepository {
     // --- Rankings --- //
 
     suspend fun getRankings(period: String, periodKey: String, limit: Int = 100): List<RankingEntry> {
-        Log.d("FirebaseRepository", "getRankings 호출: period=$period, periodKey=$periodKey")
+        Log.d(TAG, "getRankings: period=$period, periodKey=$periodKey")
         return try {
             val snapshot = rankingsCollection
                 .whereEqualTo("period", period)
@@ -241,22 +299,20 @@ class FirebaseRepository {
                 .get()
                 .await()
 
-            Log.d("FirebaseRepository", "Firestore 쿼리 성공: ${snapshot.size()} 개의 문서를 찾았습니다.")
-
             val rankings = snapshot.documents
                 .mapIndexedNotNull { index, doc ->
                     try {
                         doc.toObject(RankingEntry::class.java)?.apply { rank = index + 1 }
                     } catch (e: Exception) {
-                        Log.e("FirebaseRepository", "문서 변환 실패: docId=${doc.id}", e)
+                        Log.e(TAG, "문서 변환 실패: docId=${doc.id}", e)
                         null
                     }
                 }
 
-            Log.d("FirebaseRepository", "최종 랭킹 목록 크기: ${rankings.size}")
+            Log.d(TAG, "랭킹 목록 크기: ${rankings.size}")
             rankings
         } catch (e: Exception) {
-            Log.e("FirebaseRepository", "getRankings 실패", e)
+            Log.e(TAG, "getRankings 실패", e)
             emptyList()
         }
     }
@@ -265,7 +321,8 @@ class FirebaseRepository {
         val userId = getCurrentUserId() ?: return null
         return try {
             val docId = "${period}_${periodKey}_${userId}"
-            val userRanking = rankingsCollection.document(docId).get().await().toObject(RankingEntry::class.java) ?: return null
+            val userRanking = rankingsCollection.document(docId).get().await()
+                .toObject(RankingEntry::class.java) ?: return null
 
             val higherCount = rankingsCollection
                 .whereEqualTo("period", period)
