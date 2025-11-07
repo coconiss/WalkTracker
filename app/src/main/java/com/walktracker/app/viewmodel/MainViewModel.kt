@@ -24,9 +24,9 @@ import java.util.*
 data class MainUiState(
     val user: User? = null,
     val todayActivity: DailyActivity? = null,
-    val weeklyActivity: List<DailyActivity> = emptyList(), // 주간 활동 데이터 추가
+    val weeklyActivity: List<DailyActivity> = emptyList(),
     val lastKnownLocation: Location? = null,
-    val currentSpeed: Float = 0.0f, // 현재 속도 (m/s)
+    val currentSpeed: Float = 0.0f,
     val isLoading: Boolean = true,
     val error: String? = null,
     val notificationEnabled: Boolean = true,
@@ -38,7 +38,7 @@ data class RankingUiState(
     val isLoading: Boolean = false,
     val selectedPeriod: RankingPeriod = RankingPeriod.DAILY,
     val error: String? = null,
-    val lastUpdated: Long = 0L // 데이터 마지막 업데이트 시간
+    val lastUpdated: Long = 0L
 )
 
 enum class RankingPeriod {
@@ -57,12 +57,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _rankingState = MutableStateFlow(RankingUiState())
     val rankingState: StateFlow<RankingUiState> = _rankingState.asStateFlow()
 
-    // 5분 캐시
+    // 현재 로그인된 사용자 ID 추적
+    private var currentUserId: String? = null
+
     private val CACHE_DURATION_MS = 5 * 60 * 1000
 
     private val activityUpdateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == LocationTrackingService.ACTION_ACTIVITY_UPDATE) {
+                // 현재 사용자 ID 확인
+                val serviceUserId = repository.getCurrentUserId()
+                if (serviceUserId != currentUserId) {
+                    Log.w("MainViewModel", "User mismatch detected. Ignoring broadcast.")
+                    return
+                }
+
                 val steps = intent.getLongExtra(LocationTrackingService.EXTRA_STEPS, 0L)
                 val distance = intent.getDoubleExtra(LocationTrackingService.EXTRA_DISTANCE, 0.0)
                 val calories = intent.getDoubleExtra(LocationTrackingService.EXTRA_CALORIES, 0.0)
@@ -88,8 +97,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
+        currentUserId = repository.getCurrentUserId()
         loadUserData()
-        loadInitialTodayActivity() // 삭제: 서비스에서 보내주는 실시간 데이터로만 상태를 업데이트하여 데이터 덮어쓰기 방지
+        loadInitialTodayActivity()
         loadWeeklyActivity()
         loadNotificationSetting()
         registerReceivers()
@@ -148,6 +158,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             val user = repository.getCurrentUser()
+
+            // 사용자가 변경되었는지 확인
+            val newUserId = user?.userId
+            if (newUserId != currentUserId) {
+                Log.d("MainViewModel", "User changed from $currentUserId to $newUserId. Clearing data.")
+                currentUserId = newUserId
+                clearAllData()
+            }
+
             _uiState.update {
                 it.copy(
                     user = user,
@@ -159,7 +178,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadInitialTodayActivity() {
-        // 이미 데이터가 있다면 실행하지 않음 (실시간 데이터 보호)
         if (_uiState.value.todayActivity != null) {
             return
         }
@@ -169,7 +187,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val today = dateFormat.format(Date())
 
             repository.getDailyActivityOnce(userId, today) { activity ->
-                // 이 함수는 이제 새로고침 시에만 사용
                 if (activity != null) {
                     _uiState.update { it.copy(todayActivity = activity) }
                 }
@@ -238,7 +255,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val lastUpdated = _rankingState.value.lastUpdated
             val isCacheValid = (now - lastUpdated) < CACHE_DURATION_MS
 
-            // 캐시가 유효하고, 요청 기간이 현재 기간과 같으면 로직을 실행하지 않음
             if (isCacheValid && _rankingState.value.selectedPeriod == period) {
                 return@launch
             }
@@ -248,7 +264,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val (periodStr, periodKey) = getPeriodInfo(period)
                 val rankings = repository.getRankings(periodStr, periodKey, 100)
-                Log.d("MainViewModel", "Rankings for $periodStr ($periodKey): $rankings")
 
                 val userId = repository.getCurrentUserId()
                 var userRank: Int? = null
@@ -268,7 +283,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         userRank = userRank,
                         isLoading = false,
                         error = null,
-                        lastUpdated = System.currentTimeMillis() // 업데이트 시간 기록
+                        lastUpdated = System.currentTimeMillis()
                     )
                 }
             } catch (e: Exception) {
@@ -287,7 +302,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val calendar = Calendar.getInstance()
         return when (period) {
             RankingPeriod.DAILY -> {
-                calendar.add(Calendar.DATE, -1) // 어제 날짜
+                calendar.add(Calendar.DATE, -1)
                 "daily" to dateFormat.format(calendar.time)
             }
             RankingPeriod.MONTHLY -> {
@@ -300,9 +315,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshData() {
         loadUserData()
-        loadInitialTodayActivity() // 사용자가 직접 새로고침할 때만 동기화된 데이터 로드
+        loadInitialTodayActivity()
         loadWeeklyActivity()
-        // 랭킹 새로고침 시에는 캐시를 무시하고 새로 불러오도록 lastUpdated를 0으로 설정
         _rankingState.update { it.copy(lastUpdated = 0L) }
         loadRankings(_rankingState.value.selectedPeriod)
     }
@@ -310,5 +324,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun requestLocationUpdate() {
         val intent = Intent(LocationTrackingService.ACTION_REQUEST_LOCATION_UPDATE)
         LocalBroadcastManager.getInstance(getApplication()).sendBroadcast(intent)
+    }
+
+    /**
+     * 모든 로컬 데이터를 초기화합니다.
+     */
+    private fun clearAllData() {
+        _uiState.update {
+            MainUiState(
+                user = it.user,
+                isLoading = false
+            )
+        }
+        _rankingState.update {
+            RankingUiState()
+        }
     }
 }

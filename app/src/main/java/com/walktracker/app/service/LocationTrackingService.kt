@@ -327,8 +327,38 @@ class LocationTrackingService : Service(), SensorEventListener {
         localBroadcastManager.unregisterReceiver(locationRequestReceiver)
         localBroadcastManager.unregisterReceiver(resetDataReceiver)
 
+        // 모든 데이터 초기화
+        resetAllData()
+
         // 코루틴 스코프 취소
         serviceScope.cancel()
+    }
+
+    /**
+     * 서비스의 모든 데이터를 초기화합니다.
+     */
+    private fun resetAllData() {
+        stepsAtStartOfDay = 0L
+        distanceAtStartOfDay = 0.0
+        caloriesAtStartOfDay = 0.0
+        altitudeAtStartOfDay = 0.0
+        currentSteps = 0L
+        totalDistance = 0.0
+        totalCalories = 0.0
+        totalAltitudeGain = 0.0
+        currentSpeed = 0.0f
+        initialStepCount = 0L
+        lastPressureValue = 0f
+        pressureAtPreviousLocation = null
+        previousLocation = null
+        routePoints.clear()
+        syncPrefs.clearUnsyncedData()
+        altitudeCalculator.reset()
+        stepsSynced = 0L
+        distanceSynced = 0.0
+        caloriesSynced = 0.0
+        altitudeSynced = 0.0
+        isInitialDataLoaded = false
     }
 
     /**
@@ -341,8 +371,6 @@ class LocationTrackingService : Service(), SensorEventListener {
                 delay(SYNC_INTERVAL)
                 Log.d(TAG, "주기적 동기화 실행")
                 syncToFirebase()
-                // 랭킹 업데이트는 서버에서 처리하므로 주석 처리
-                // repository.flushRankingUpdates()
             }
         }
     }

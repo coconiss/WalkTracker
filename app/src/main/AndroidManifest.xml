@@ -18,8 +18,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
-    <!-- 걸음 센서 -->
-    <uses-permission android:name="android.permission.BODY_SENSORS" />
+    <!-- 걸음 센서
+    <uses-permission android:name="android.permission.BODY_SENSORS" /> -->
 
     <!-- 부팅 시 자동 시작 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />

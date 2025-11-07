@@ -116,16 +116,19 @@ class MainActivity : ComponentActivity() {
                                 MainApp(
                                     viewModel = mainViewModel,
                                     onSignOut = {
-                                        auth.signOut()
+                                        // 서비스 중지 및 데이터 초기화
                                         stopTrackingService()
+                                        clearAllData()
+                                        auth.signOut()
+
                                         navController.navigate("login") {
                                             popUpTo("main") { inclusive = true }
                                         }
                                     },
                                     onForceQuit = {
                                         stopTrackingService()
-                                        finishAffinity() // 모든 액티비티 종료
-                                        exitProcess(0) // 프로세스 강제 종료
+                                        finishAffinity()
+                                        exitProcess(0)
                                     },
                                     navController = navController
                                 )
@@ -147,7 +150,7 @@ class MainActivity : ComponentActivity() {
     private fun showPermissionDialog() {
         AlertDialog.Builder(this)
             .setTitle("권한 안내 (필수)")
-            .setMessage("앱의 핵심 기능을 사용하려면 필수 권한을 허용해야 합니다. \'허용\' 버튼을 눌러 설정 화면으로 이동한 후, 모든 권한을 허용해주세요.")
+            .setMessage("앱의 핵심 기능을 사용하려면 필수 권한을 허용해야 합니다. '허용' 버튼을 눌러 설정 화면으로 이동한 후, 모든 권한을 허용해주세요.")
             .setPositiveButton("허용") { _, _ ->
                 val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                     data = Uri.fromParts("package", packageName, null)
@@ -155,7 +158,7 @@ class MainActivity : ComponentActivity() {
                 settingsLauncher.launch(intent)
             }
             .setNegativeButton("거부") { _, _ ->
-                finish() // Exit the app
+                finish()
             }
             .setCancelable(false)
             .show()
@@ -165,7 +168,7 @@ class MainActivity : ComponentActivity() {
         val permissions = mutableListOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.BODY_SENSORS,
+            //Manifest.permission.BODY_SENSORS,
             Manifest.permission.ACTIVITY_RECOGNITION
         )
 
@@ -208,6 +211,36 @@ class MainActivity : ComponentActivity() {
     private fun stopTrackingService() {
         Log.d(TAG, "stopTrackingService: 서비스 중지")
         stopService(Intent(this, LocationTrackingService::class.java))
+
+        getSharedPreferences("WalkTrackerPrefs", MODE_PRIVATE)
+            .edit()
+            .putBoolean("tracking_enabled", false)
+            .apply()
+    }
+
+    /**
+     * 로그아웃 시 모든 로컬 데이터를 초기화합니다.
+     */
+    private fun clearAllData() {
+        Log.d(TAG, "clearAllData: 모든 로컬 데이터 초기화")
+
+        // WalkTrackerPrefs 초기화
+        getSharedPreferences("WalkTrackerPrefs", MODE_PRIVATE)
+            .edit()
+            .clear()
+            .apply()
+
+        // WalkTrackerSyncPrefs 초기화
+        getSharedPreferences("WalkTrackerSyncPrefs", MODE_PRIVATE)
+            .edit()
+            .clear()
+            .apply()
+
+        // osmdroid 캐시 초기화 (선택사항)
+        getSharedPreferences("osmdroid", MODE_PRIVATE)
+            .edit()
+            .clear()
+            .apply()
     }
 
     companion object {
@@ -219,14 +252,12 @@ class MainActivity : ComponentActivity() {
 fun MainApp(
     viewModel: MainViewModel,
     onSignOut: () -> Unit,
-    onForceQuit: () -> Unit, // 강제 종료 콜백 추가
+    onForceQuit: () -> Unit,
     navController: NavHostController
 ) {
     val appNavController = rememberNavController()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val rankingState by viewModel.rankingState.collectAsStateWithLifecycle()
-
-    // ViewModel이 Broadcast를 수신하므로 UI에서는 별도 처리가 필요 없음
 
     Scaffold(
         bottomBar = {
@@ -254,7 +285,7 @@ fun MainApp(
             }
             composable("map") {
                 MapScreen(
-                    routePoints = emptyList(), // 경로 데이터는 ViewModel에서 관리하도록 수정 필요
+                    routePoints = emptyList(),
                     lastKnownLocation = uiState.lastKnownLocation,
                     onLocationRequest = { viewModel.requestLocationUpdate() }
                 )
@@ -281,7 +312,7 @@ fun MainApp(
                     onNotificationChange = {
                         viewModel.setNotificationEnabled(it)
                     },
-                    onForceQuit = onForceQuit // 콜백 전달
+                    onForceQuit = onForceQuit
                 )
             }
         }
@@ -328,15 +359,13 @@ fun AdMobBanner() {
         factory = {
             AdView(context).apply {
                 setAdSize(AdSize.BANNER)
-                // 앱 ID가 아닌 테스트용 배너 단위 ID를 사용해야 합니다.
-                adUnitId = "ca-app-pub-3940256099942544/6300978111" // Test Banner ID
+                adUnitId = "ca-app-pub-3940256099942544/6300978111"
                 loadAd(AdRequest.Builder().build())
             }
         },
         modifier = Modifier.fillMaxWidth().height(50.dp)
     )
 }
-
 
 data class NavigationItem(
     val route: String,

@@ -383,7 +383,7 @@ private fun WeeklySummaryCard(
 
 @Composable
 fun WeeklyBarChart(data: List<DailyActivity>) {
-    val maxValue = data.maxOfOrNull { it.steps }?.toFloat() ?: 1f
+    val maxValue = data.maxOfOrNull { it.steps }?.toFloat()?.takeIf { it > 0f } ?: 1f
     val dayFormat = remember { SimpleDateFormat("EEE", Locale.KOREAN) }
 
     Row(

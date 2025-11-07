@@ -39,9 +39,7 @@ fun RankingScreen(
         )
 
         // 내 순위 카드
-        if (rankingState.userRank != null) {
-            MyRankCard(rank = rankingState.userRank)
-        }
+        MyRankCard(rank = rankingState.userRank)
 
         Spacer(modifier = Modifier.height(8.dp))
 
@@ -96,23 +94,23 @@ private fun PeriodTabs(
         Tab(
             selected = selectedPeriod == RankingPeriod.DAILY,
             onClick = { onPeriodChange(RankingPeriod.DAILY) },
-            text = { Text("일간") }
+            text = { Text("어제") }
         )
         Tab(
             selected = selectedPeriod == RankingPeriod.MONTHLY,
             onClick = { onPeriodChange(RankingPeriod.MONTHLY) },
-            text = { Text("월간") }
+            text = { Text("이번달") }
         )
         Tab(
             selected = selectedPeriod == RankingPeriod.YEARLY,
             onClick = { onPeriodChange(RankingPeriod.YEARLY) },
-            text = { Text("연간") }
+            text = { Text("올해") }
         )
     }
 }
 
 @Composable
-private fun MyRankCard(rank: Int) {
+private fun MyRankCard(rank: Int?) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -149,7 +147,7 @@ private fun MyRankCard(rank: Int) {
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                     )
                     Text(
-                        text = "${rank}위",
+                        text = if (rank != null) "${rank}위" else "내 순위 없음",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
