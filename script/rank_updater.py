@@ -25,9 +25,13 @@ def update_ranking_for_period(period_type: str, period_key: str):
     """지정된 기간의 랭킹을 계산하고 업데이트하는 범용 함수"""
     print(f"Starting ranking update for {period_type}/{period_key}...")
     
-    # Firestore에서 해당 기간의 데이터를 'steps' 기준으로 내림차순 정렬하여 가져옴
-    rankings_ref = db.collection(f"rankings/{period_type}/{period_key}")
-    docs_snapshot = rankings_ref.order_by("steps", direction=firestore.Query.DESCENDING).stream()
+    # Firestore에서 해당 기간의 데이터를 'distance' 기준으로 내림차순 정렬하여 가져옴
+    # 실제 앱의 로직에 맞춰 단일 'rankings' 컬렉션을 쿼리하도록 수정
+    rankings_ref = db.collection("rankings")
+    docs_snapshot = rankings_ref.where("period", "==", period_type) \
+                                .where("periodKey", "==", period_key) \
+                                .order_by("distance", direction=firestore.Query.DESCENDING) \
+                                .stream()
 
     # Firestore의 Batch Write 기능을 사용하여 여러 문서를 한 번에 효율적으로 업데이트
     batch = db.batch()
@@ -36,6 +40,7 @@ def update_ranking_for_period(period_type: str, period_key: str):
     
     for doc in docs_snapshot:
         doc_count += 1
+        # 'rank' 필드를 업데이트하기 위해 batch에 추가
         batch.update(doc.reference, {"rank": rank})
         rank += 1
         
