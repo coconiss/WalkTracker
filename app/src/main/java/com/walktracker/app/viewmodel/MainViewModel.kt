@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.location.Location
 import android.os.Build
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
@@ -247,6 +248,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val (periodStr, periodKey) = getPeriodInfo(period)
                 val rankings = repository.getRankings(periodStr, periodKey, 100)
+                Log.d("MainViewModel", "Rankings for $periodStr ($periodKey): $rankings")
 
                 val userId = repository.getCurrentUserId()
                 var userRank: Int? = null
@@ -270,6 +272,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             } catch (e: Exception) {
+                Log.e("MainViewModel", "Failed to load rankings for $period", e)
                 _rankingState.update {
                     it.copy(
                         isLoading = false,

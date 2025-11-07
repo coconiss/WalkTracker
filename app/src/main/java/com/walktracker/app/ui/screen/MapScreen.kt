@@ -135,14 +135,19 @@ fun MapScreen(
 
                 if (loadedRoutes.size > 1) {
                     loadedRoutes.windowed(2).forEach { (start, end) ->
-                        val segmentPolyline = Polyline().apply {
-                            val speed = start.speed // 시작점의 속도를 기준으로 색상 결정
-                            outlinePaint.color = getColorForSpeed(speed)
-                            outlinePaint.strokeWidth = 12f
+                        val timeDifferenceSeconds = (end.timestamp - start.timestamp) / 1000
+                        // 60초 이상 차이나는 경로는 그리지 않음 (LocationTrackingService.kt 참조)
+                        if (timeDifferenceSeconds < 60) {
+                            val segmentPolyline = Polyline().apply {
+                                val speed = start.speed // 시작점의 속도를 기준으로 색상 결정
+                                outlinePaint.color = getColorForSpeed(speed)
+                                outlinePaint.strokeWidth = 12f
+                            }
+                            val segmentPoints =
+                                listOf(GeoPoint(start.latitude, start.longitude), GeoPoint(end.latitude, end.longitude))
+                            segmentPolyline.setPoints(segmentPoints)
+                            view.overlays.add(segmentPolyline)
                         }
-                        val segmentPoints = listOf(GeoPoint(start.latitude, start.longitude), GeoPoint(end.latitude, end.longitude))
-                        segmentPolyline.setPoints(segmentPoints)
-                        view.overlays.add(segmentPolyline)
                     }
 
                     // 경로 중심으로 이동 (단, 사용자가 지도를 조작하지 않았을 때만)
