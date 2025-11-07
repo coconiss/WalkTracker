@@ -37,6 +37,4 @@ jobs:
         # GitHub Secrets에 저장한 인증 정보를 환경 변수로 주입
         env:
           FIREBASE_CREDENTIALS_JSON: ${{ secrets.FIREBASE_CREDENTIALS }}
-        working-directory: ./
-        run: |
-          python scripts/rank_updater.py
+        run: python ${{ github.workspace }}/scripts/rank_updater.py
