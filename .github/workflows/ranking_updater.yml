@@ -3,57 +3,58 @@
 name: Update Firestore Rankings
 
 on:
-  # 1. 스케줄 실행: cron 포맷을 사용하여 UTC 기준으로 실행
   schedule:
     # 한국 시간(KST)으로 매일 00시 정각에 실행되도록 UTC 기준 15:00로 설정
     - cron: '0 15 * * *'
-
-  # 2. 수동 실행: GitHub Actions 탭에서 "Run workflow" 버튼으로 직접 실행 가능하도록 설정
+  
+  # 수동 실행을 위한 옵션
   workflow_dispatch:
 
 jobs:
   update-firestore-rankings:
-    # 실행 환경을 최신 Ubuntu로 지정
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 저장소 코드를 체크아웃(복제)하는 스텝
-      # 'path: . ' 옵션을 추가하여 작업 디렉터리 루트에 바로 코드를 복제하도록 명시합니다.
-      # 이렇게 하면 WalkTracker/WalkTracker 같은 경로 중첩 문제를 방지할 수 있습니다.
+      # 1. 저장소 코드를 기본 경로에 체크아웃합니다.
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          path: '.'
 
-      # 2. Python 환경을 설정하는 스텝
+      # 2. Python 환경을 설정합니다.
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10' # rank_updater.py 스크립트와 호환되는 버전
+          python-version: '3.10'
 
-      # 3. Python 의존성 라이브러리를 설치하는 스텝
-      # firebase-admin과 시간대 처리를 위한 pytz를 설치합니다.
+      # 3. Python 의존성 라이브러리를 설치합니다.
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install firebase-admin pytz
 
-      # 4. (디버깅용) 실제 파일 구조를 확인하기 위한 스텝
-      # 이 스텝은 문제가 해결된 후에는 삭제해도 됩니다.
-      # 어떤 파일들이 어디에 위치해 있는지 로그로 출력하여 경로 문제를 확인할 수 있습니다.
-      - name: "DEBUG: List all files in the workspace"
+      # 4. (★★★ 가장 중요한 디버깅 스텝 ★★★)
+      # 현재 작업 공간의 모든 파일과 디렉터리 구조를 출력하여 문제를 진단합니다.
+      - name: "DEBUG: List all files and find the script"
+        id: debug_step # 이 스텝에 ID를 부여합니다.
         run: |
-          echo "Current directory:"
-          pwd
-          echo "---"
-          echo "Listing all files recursively:"
+          echo "Current workspace is: ${{ github.workspace }}"
+          echo "=================================================="
+          echo "Listing all files and directories recursively:"
           ls -R
+          echo "=================================================="
+          echo "Finding rank_updater.py file..."
+          # 'find' 명령으로 rank_updater.py의 전체 경로를 찾습니다.
+          SCRIPT_PATH=$(find ${{ github.workspace }} -name "rank_updater.py")
+          if [[ -z "$SCRIPT_PATH" ]]; then
+            echo "::error::rank_updater.py not found in the workspace!"
+            exit 1
+          fi
+          echo "Script found at: $SCRIPT_PATH"
+          # 찾은 경로를 GitHub Actions의 출력 변수로 설정합니다.
+          echo "script_path=$SCRIPT_PATH" >> $GITHUB_OUTPUT
 
-      # 5. 작성한 Python 스크립트를 실행하여 랭킹을 업데이트하는 핵심 스텝
+      # 5. 위 디버깅 스텝에서 찾은 정확한 경로로 Python 스크립트를 실행합니다.
       - name: Run ranking update script
         env:
-          # GitHub Secrets에 저장한 Firebase 인증 키를 환경 변수로 주입합니다.
           FIREBASE_CREDENTIALS_JSON: ${{ secrets.FIREBASE_CREDENTIALS }}
-        # 이제 경로는 'scripts/rank_updater.py'로 단순해집니다.
-        run: python scripts/rank_updater.py
-
+        # 'needs'와 'steps' context를 사용하여 다른 스텝의 출력값을 가져옵니다.
+        run: python ${{ steps.debug_step.outputs.script_path }}
