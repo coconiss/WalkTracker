@@ -31,7 +31,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install firebase-admin
-
+      - name: "DEBUG: List files in the repository root"
+        run: |
+          pwd
+          ls -R 
+          
       # 4. 랭킹 업데이트 스크립트 실행
       - name: Run ranking update script
         # GitHub Secrets에 저장한 인증 정보를 환경 변수로 주입
