@@ -286,7 +286,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun getPeriodInfo(period: RankingPeriod): Pair<String, String> {
         val calendar = Calendar.getInstance()
         return when (period) {
-            RankingPeriod.DAILY -> "daily" to dateFormat.format(calendar.time)
+            RankingPeriod.DAILY -> {
+                calendar.add(Calendar.DATE, -1) // 어제 날짜
+                "daily" to dateFormat.format(calendar.time)
+            }
             RankingPeriod.MONTHLY -> {
                 val key = String.format("%04d-%02d", calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH) + 1)
                 "monthly" to key

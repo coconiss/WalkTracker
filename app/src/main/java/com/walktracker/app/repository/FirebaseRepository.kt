@@ -24,7 +24,7 @@ class FirebaseRepository {
     private val rankingsCollection = firestore.collection("rankings")
 
     // 랭킹 배치 업데이트를 위한 큐
-    private val pendingRankingUpdates = mutableMapOf<String, RankingUpdate>()
+    // private val pendingRankingUpdates = mutableMapOf<String, RankingUpdate>()
 
     data class RankingUpdate(
         val userId: String,
@@ -160,8 +160,8 @@ class FirebaseRepository {
             }
         }.await()
 
-        // 랭킹 업데이트를 큐에 추가
-        queueRankingUpdate(userId, userName, totalDistance, date)
+        // 랭킹 업데이트를 큐에 추가 (서버에서 처리하므로 주석 처리)
+        // queueRankingUpdate(userId, userName, totalDistance, date)
 
         Result.success(Unit)
     } catch (e: Exception) {
@@ -169,6 +169,7 @@ class FirebaseRepository {
         Result.failure(e)
     }
 
+    /* 서버에서 랭킹을 집계하므로 클라이언트의 업데이트 로직은 주석 처리합니다.
     private fun queueRankingUpdate(userId: String, displayName: String, distance: Double, date: String) {
         try {
             val calendar = Calendar.getInstance().apply {
@@ -230,6 +231,7 @@ class FirebaseRepository {
             Result.failure(e)
         }
     }
+    */
 
     fun getDailyActivity(userId: String, date: String): Flow<DailyActivity?> {
         return callbackFlow {

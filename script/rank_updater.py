@@ -89,7 +89,7 @@ def update_ranking_for_period(period_type: str, period_key: str):
             "rank": rank, # 계산된 순위
             "updatedAt": firestore.SERVER_TIMESTAMP
         }
-        # set(merge=True) 대신 set()을 사용하여 이전 집계 데이터를 완전히 덮어씁니다.
+        # set()을 사용하여 이전 집계 데이터를 완전히 덮어씁니다.
         batch.set(ranking_ref, data)
 
         if rank % 500 == 0:
@@ -102,26 +102,21 @@ def update_ranking_for_period(period_type: str, period_key: str):
 
 def main():
     """실행할 랭킹 업데이트 작업을 정의합니다."""
-    # GitHub Actions는 UTC 기준이므로, 한국 시간 오전 9시(UTC 0시) 실행을 권장합니다.
-    # 스크립트는 실행 시점의 UTC 날짜를 기준으로 계산합니다.
+    # GitHub Actions는 UTC를 기준으로 실행됩니다.
+    today = datetime.date.today()
 
     # 1. 어제의 일간 랭킹 집계
-    yesterday = datetime.date.today() - datetime.timedelta(days=1)
+    yesterday = today - datetime.timedelta(days=1)
     daily_key = yesterday.strftime("%Y-%m-%d")
     update_ranking_for_period("daily", daily_key)
 
-    # 2. 지난달의 월간 랭킹 집계 (매월 1일에만 실행)
-    today = datetime.date.today()
-    if today.day == 1:
-        last_month_date = today.replace(day=1) - datetime.timedelta(days=1)
-        monthly_key = last_month_date.strftime("%Y-%m")
-        update_ranking_for_period("monthly", monthly_key)
+    # 2. 이번 달의 월간 랭킹 집계
+    monthly_key = today.strftime("%Y-%m")
+    update_ranking_for_period("monthly", monthly_key)
 
-    # 3. 작년의 연간 랭킹 집계 (매년 1월 1일에만 실행)
-    if today.month == 1 and today.day == 1:
-        last_year = today.year - 1
-        yearly_key = str(last_year)
-        update_ranking_for_period("yearly", yearly_key)
+    # 3. 올해의 연간 랭킹 집계
+    yearly_key = str(today.year)
+    update_ranking_for_period("yearly", yearly_key)
 
 if __name__ == "__main__":
     main()

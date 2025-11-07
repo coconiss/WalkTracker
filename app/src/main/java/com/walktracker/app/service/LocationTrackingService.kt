@@ -341,7 +341,8 @@ class LocationTrackingService : Service(), SensorEventListener {
                 delay(SYNC_INTERVAL)
                 Log.d(TAG, "주기적 동기화 실행")
                 syncToFirebase()
-                repository.flushRankingUpdates() // 랭킹 업데이트도 주기적으로 처리
+                // 랭킹 업데이트는 서버에서 처리하므로 주석 처리
+                // repository.flushRankingUpdates()
             }
         }
     }
