@@ -5,7 +5,7 @@ on:
   schedule:
     # 매일 00:00 UTC (한국 시간 오전 9시)에 실행
     # 한국 시간 기준 '어제'를 계산하기 가장 좋은 시간입니다.
-    - cron: '0 0 * * *'
+    - cron: '15 0 * * *'
 
   # 2. 수동 실행: GitHub Actions 탭에서 "Run workflow" 버튼으로 직접 실행 가능
   workflow_dispatch:
