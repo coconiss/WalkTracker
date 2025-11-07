@@ -1,78 +1,123 @@
 import firebase_admin
 from firebase_admin import credentials, firestore
 import datetime
-import os # os 모듈 추가
+import os
+import calendar
 
-# --- GitHub Actions 환경에서 실행 ---
-# GitHub Secrets에서 서비스 계정 정보를 가져와 인증
-# 로컬 테스트 시에는 'path/to/key.json'을 직접 사용
+# --- Firebase 초기화 ---
 cred_json = os.environ.get('FIREBASE_CREDENTIALS_JSON')
-
 if cred_json:
-    # GitHub Actions에서 실행될 때 (환경 변수 사용)
     import json
     cred_dict = json.loads(cred_json)
     cred = credentials.Certificate(cred_dict)
 else:
-    # 로컬에서 테스트할 때 (파일 경로 사용)
-    # 아래 파일 경로는 실제 키 파일의 위치로 수정해야 합니다.
+    # 로컬 테스트 시 실제 키 파일 경로로 수정하세요.
     cred = credentials.Certificate("path/to/your/serviceAccountKey.json")
 
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
+# --- 사용자 정보 캐싱을 위한 헬퍼 ---
+user_cache = {}
+def get_user_display_name(user_id):
+    """사용자 ID로 displayName을 조회하고 캐시에 저장합니다."""
+    if user_id in user_cache:
+        return user_cache[user_id]
+
+    user_ref = db.collection('users').document(user_id)
+    user_doc = user_ref.get()
+    if user_doc.exists:
+        display_name = user_doc.to_dict().get('displayName', 'Unknown User')
+        user_cache[user_id] = display_name
+        return display_name
+    return 'Unknown User'
+
 def update_ranking_for_period(period_type: str, period_key: str):
-    """지정된 기간의 랭킹을 계산하고 업데이트하는 범용 함수"""
-    print(f"Starting ranking update for {period_type}/{period_key}...")
-    
-    # Firestore에서 해당 기간의 데이터를 'distance' 기준으로 내림차순 정렬하여 가져옴
-    # 실제 앱의 로직에 맞춰 단일 'rankings' 컬렉션을 쿼리하도록 수정
-    rankings_ref = db.collection("rankings")
-    docs_snapshot = rankings_ref.where("period", "==", period_type) \
-                                .where("periodKey", "==", period_key) \
-                                .order_by("distance", direction=firestore.Query.DESCENDING) \
-                                .stream()
+    """daily_activities를 기반으로 지정된 기간의 랭킹을 계산하고 업데이트합니다."""
+    print(f"Starting ranking calculation for {period_type}/{period_key}...")
 
-    # Firestore의 Batch Write 기능을 사용하여 여러 문서를 한 번에 효율적으로 업데이트
-    batch = db.batch()
-    rank = 1
-    doc_count = 0
-    
-    for doc in docs_snapshot:
-        doc_count += 1
-        # 'rank' 필드를 업데이트하기 위해 batch에 추가
-        batch.update(doc.reference, {"rank": rank})
-        rank += 1
-        
-        # Batch는 500개 쓰기 제한이 있으므로, 500개마다 커밋
-        if doc_count % 500 == 0:
-            batch.commit()
-            batch = db.batch() # 새 배치 시작
-
-    if doc_count > 0:
-        batch.commit() # 남은 배치 커밋
-        print(f"Successfully updated {doc_count} user ranks for {period_type}/{period_key}.")
+    # 1. 기간에 따른 날짜 범위 설정
+    if period_type == 'daily':
+        start_date = end_date = period_key
+    elif period_type == 'monthly':  # period_key: "YYYY-MM"
+        year, month = map(int, period_key.split('-'))
+        start_date = f"{period_key}-01"
+        last_day = calendar.monthrange(year, month)[1]
+        end_date = f"{period_key}-{last_day:02d}"
+    elif period_type == 'yearly':  # period_key: "YYYY"
+        start_date = f"{period_key}-01-01"
+        end_date = f"{period_key}-12-31"
     else:
-        print(f"No documents found for {period_type}/{period_key}. Nothing to update.")
+        print(f"Unknown period type: {period_type}")
+        return
+
+    # 2. daily_activities 컬렉션에서 데이터 조회
+    activities_ref = db.collection('daily_activities')
+    docs_snapshot = activities_ref.where('date', '>=', start_date).where('date', '<=', end_date).stream()
+
+    # 3. 사용자별로 거리 합산
+    user_distances = {}  # { userId: totalDistance }
+    for doc in docs_snapshot:
+        activity = doc.to_dict()
+        user_id = activity.get('userId')
+        distance = activity.get('distance', 0)
+        if user_id:
+            user_distances[user_id] = user_distances.get(user_id, 0) + distance
+
+    if not user_distances:
+        print(f"No activities found for {period_type}/{period_key}. Nothing to update.")
+        return
+
+    # 4. 총 거리를 기준으로 랭킹 정렬
+    sorted_rankings = sorted(user_distances.items(), key=lambda item: item[1], reverse=True)
+
+    # 5. Firestore에 배치 쓰기 준비
+    batch = db.batch()
+    for rank, (user_id, total_distance) in enumerate(sorted_rankings, 1):
+        display_name = get_user_display_name(user_id)
+
+        # rankings 컬렉션에 저장할 문서 ID 및 데이터 생성
+        doc_id = f"{period_type}_{period_key}_{user_id}"
+        ranking_ref = db.collection('rankings').document(doc_id)
+
+        data = {
+            "userId": user_id,
+            "displayName": display_name,
+            "distance": total_distance,
+            "period": period_type,
+            "periodKey": period_key,
+            "rank": rank, # 계산된 순위
+            "updatedAt": firestore.SERVER_TIMESTAMP
+        }
+        # set(merge=True) 대신 set()을 사용하여 이전 집계 데이터를 완전히 덮어씁니다.
+        batch.set(ranking_ref, data)
+
+        if rank % 500 == 0:
+            batch.commit()
+            batch = db.batch()
+
+    batch.commit()
+    print(f"Successfully calculated and updated {len(sorted_rankings)} user ranks for {period_type}/{period_key}.")
+
 
 def main():
-    """실행할 랭킹 업데이트 작업을 정의"""
-    
+    """실행할 랭킹 업데이트 작업을 정의합니다."""
+    # GitHub Actions는 UTC 기준이므로, 한국 시간 오전 9시(UTC 0시) 실행을 권장합니다.
+    # 스크립트는 실행 시점의 UTC 날짜를 기준으로 계산합니다.
+
     # 1. 어제의 일간 랭킹 집계
-    # 한국 시간 기준으로 어제를 계산 (UTC 기준으로는 다를 수 있음)
-    # GitHub Actions는 UTC 기준이므로, 한국 시간 오전 9시에 실행하면 UTC 0시가 되어 날짜 계산이 쉬움
     yesterday = datetime.date.today() - datetime.timedelta(days=1)
     daily_key = yesterday.strftime("%Y-%m-%d")
     update_ranking_for_period("daily", daily_key)
 
-    # 2. 지난달의 월간 랭킹 집계 (매월 1일에만 실행되도록)
+    # 2. 지난달의 월간 랭킹 집계 (매월 1일에만 실행)
     today = datetime.date.today()
     if today.day == 1:
         last_month_date = today.replace(day=1) - datetime.timedelta(days=1)
         monthly_key = last_month_date.strftime("%Y-%m")
         update_ranking_for_period("monthly", monthly_key)
 
-    # 3. 작년의 연간 랭킹 집계 (매년 1월 1일에만 실행되도록)
+    # 3. 작년의 연간 랭킹 집계 (매년 1월 1일에만 실행)
     if today.month == 1 and today.day == 1:
         last_year = today.year - 1
         yearly_key = str(last_year)
