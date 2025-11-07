@@ -3,8 +3,8 @@
 name: Update Firestore Rankings
 
 on:
+  # 한국 시간(KST)으로 매일 00시 정각에 실행되도록 UTC 기준 15:00로 설정
   schedule:
-    # 한국 시간(KST)으로 매일 00시 정각에 실행되도록 UTC 기준 15:00로 설정
     - cron: '0 15 * * *'
   
   # 수동 실행을 위한 옵션
@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 저장소 코드를 기본 경로에 체크아웃합니다.
+      # 1. 저장소 코드를 체크아웃합니다.
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -31,30 +31,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install firebase-admin pytz
 
-      # 4. (★★★ 가장 중요한 디버깅 스텝 ★★★)
-      # 현재 작업 공간의 모든 파일과 디렉터리 구조를 출력하여 문제를 진단합니다.
-      - name: "DEBUG: List all files and find the script"
-        id: debug_step # 이 스텝에 ID를 부여합니다.
-        run: |
-          echo "Current workspace is: ${{ github.workspace }}"
-          echo "=================================================="
-          echo "Listing all files and directories recursively:"
-          ls -R
-          echo "=================================================="
-          echo "Finding rank_updater.py file..."
-          # 'find' 명령으로 rank_updater.py의 전체 경로를 찾습니다.
-          SCRIPT_PATH=$(find ${{ github.workspace }} -name "rank_updater.py")
-          if [[ -z "$SCRIPT_PATH" ]]; then
-            echo "::error::rank_updater.py not found in the workspace!"
-            exit 1
-          fi
-          echo "Script found at: $SCRIPT_PATH"
-          # 찾은 경로를 GitHub Actions의 출력 변수로 설정합니다.
-          echo "script_path=$SCRIPT_PATH" >> $GITHUB_OUTPUT
+      # 4. (이제 원인을 알았으니 이 디버깅 스텝은 삭제해도 됩니다)
+      - name: "DEBUG: List all files"
+        run: ls -R
 
-      # 5. 위 디버깅 스텝에서 찾은 정확한 경로로 Python 스크립트를 실행합니다.
+      # 5. 스크립트를 실행합니다. 'scripts'를 'script'로 수정했습니다.
       - name: Run ranking update script
         env:
+          # GitHub Secrets에 저장한 Firebase 인증 키를 환경 변수로 주입합니다.
           FIREBASE_CREDENTIALS_JSON: ${{ secrets.FIREBASE_CREDENTIALS }}
-        # 'needs'와 'steps' context를 사용하여 다른 스텝의 출력값을 가져옵니다.
-        run: python ${{ steps.debug_step.outputs.script_path }}
+        run: python script/rank_updater.py
