@@ -37,6 +37,7 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Polyline
+import org.osmdroid.views.overlay.ScaleBarOverlay
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import java.text.SimpleDateFormat
@@ -99,6 +100,18 @@ fun MapScreen(
             mapView.overlays.add(locationOverlay)
             myLocationOverlay = locationOverlay
 
+            // 축척 막대 오버레이 추가
+            val scaleBarOverlay = ScaleBarOverlay(mapView)
+            scaleBarOverlay.setCentred(true)
+            scaleBarOverlay.setAlignBottom(true)
+            scaleBarOverlay.setAlignRight(true)
+            val density = context.resources.displayMetrics.density
+            val xOffset = ((16 + 56 + 16) * density).toInt() // GPS 버튼 오른쪽 패딩 + 버튼 너비 + 버튼 왼쪽 여백
+            val yOffset = ((16 + 28) * density).toInt()      // GPS 버튼 하단 패딩 + 버튼 높이 절반 (수직 중앙 정렬)
+            scaleBarOverlay.setScaleBarOffset(xOffset, yOffset)
+            mapView.overlays.add(scaleBarOverlay)
+
+
             // 초기 위치 및 줌 설정
             lastKnownLocation?.let { loc ->
                 mapView.controller.setZoom(18.0) // 줌 레벨 확대
@@ -124,14 +137,16 @@ fun MapScreen(
                 MapView(ctx).apply {
                     setTileSource(TileSourceFactory.MAPNIK)
                     setMultiTouchControls(true)
+                    setBuiltInZoomControls(false)
                     mapView = this
                 }
             },
             modifier = Modifier.fillMaxSize(),
             update = { view ->
-                // 중복 추가를 막기 위해 myLocationOverlay를 제외한 오버레이만 클리어
-                val overlaysToRemove = view.overlays.filter { it !is MyLocationNewOverlay }
+                // 중복 추가를 막기 위해 myLocationOverlay와 ScaleBarOverlay를 제외한 오버레이만 클리어
+                val overlaysToRemove = view.overlays.filter { it !is MyLocationNewOverlay && it !is ScaleBarOverlay }
                 view.overlays.removeAll(overlaysToRemove)
+
 
                 if (loadedRoutes.size > 1) {
                     loadedRoutes.windowed(2).forEach { (start, end) ->
