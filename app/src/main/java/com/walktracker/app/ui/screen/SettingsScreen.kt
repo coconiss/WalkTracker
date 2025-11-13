@@ -1,5 +1,7 @@
 package com.walktracker.app.ui.screen
 
+import android.content.Context
+import android.content.Intent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,7 +17,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.walktracker.app.model.User
+import com.walktracker.app.service.LocationTrackingService
+import com.walktracker.app.util.SharedPreferencesManager
 
 @Composable
 fun SettingsScreen(
@@ -26,10 +31,29 @@ fun SettingsScreen(
     onNotificationChange: (Boolean) -> Unit,
     onForceQuit: () -> Unit // 강제 종료 콜백 추가
 ) {
+    val context = LocalContext.current
+    val prefs = remember { SharedPreferencesManager(context) }
+
     var showWeightDialog by remember { mutableStateOf(false) }
+    var showStrideDialog by remember { mutableStateOf(false) } // 보폭 다이얼로그
     var showPrivacyPolicyDialog by remember { mutableStateOf(false) }
     var showAppInfoDialog by remember { mutableStateOf(false) }
     var showForceQuitDialog by remember { mutableStateOf(false) } // 강제 종료 확인 다이얼로그 상태
+
+    // 센서 설정 상태
+    var gpsEnabled by remember { mutableStateOf(prefs.isGpsEnabled()) }
+    var stepSensorEnabled by remember { mutableStateOf(prefs.isStepSensorEnabled()) }
+    var pressureSensorEnabled by remember { mutableStateOf(prefs.isPressureSensorEnabled()) }
+
+    fun sendSensorSettingsChangedBroadcast() {
+        val intent = Intent(LocationTrackingService.ACTION_SENSOR_SETTINGS_CHANGED)
+        LocalBroadcastManager.getInstance(context).sendBroadcast(intent)
+    }
+
+    fun sendUserDataChangedBroadcast() {
+        val intent = Intent(LocationTrackingService.ACTION_USER_DATA_CHANGED)
+        LocalBroadcastManager.getInstance(context).sendBroadcast(intent)
+    }
 
     Column(
         modifier = Modifier
@@ -56,6 +80,72 @@ fun SettingsScreen(
             onClick = { showWeightDialog = true }
         )
 
+        SettingItem(
+            icon = Icons.Default.SquareFoot,
+            title = "보폭 설정",
+            subtitle = "${String.format("%.1f", prefs.getUserStride())} m",
+            onClick = { showStrideDialog = true }
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // 센서 설정
+        Text(
+            text = "센서 설정",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
+        )
+
+        SwitchSettingItem(
+            icon = Icons.Default.LocationOn,
+            title = "GPS",
+            subtitle = "위치 기반 거리, 속도, 경로 추적",
+            checked = gpsEnabled,
+            onCheckedChange = {
+                if (!it && !stepSensorEnabled) { // 둘 다 끄려고 할 때
+                    // TODO: 사용자에게 알림 (Toast 등)
+                } else {
+                    gpsEnabled = it
+                    prefs.setGpsEnabled(it)
+                    sendSensorSettingsChangedBroadcast()
+                }
+            }
+        )
+
+        SwitchSettingItem(
+            icon = Icons.Default.DirectionsWalk,
+            title = "걸음 센서",
+            subtitle = "걸음 수 및 활동 감지",
+            checked = stepSensorEnabled,
+            onCheckedChange = {
+                if (!it && !gpsEnabled) { // 둘 다 끄려고 할 때
+                    // TODO: 사용자에게 알림 (Toast 등)
+                } else {
+                    stepSensorEnabled = it
+                    prefs.setStepSensorEnabled(it)
+                    sendSensorSettingsChangedBroadcast()
+                }
+            }
+        )
+        Text(
+            text = "GPS와 걸음 센서 둘 중 하나는 반드시 켜져 있어야 합니다.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
+        )
+
+        SwitchSettingItem(
+            icon = Icons.Default.Compress,
+            title = "기압 센서",
+            subtitle = "고도 변화량 측정",
+            checked = pressureSensorEnabled,
+            onCheckedChange = {
+                pressureSensorEnabled = it
+                prefs.setPressureSensorEnabled(it)
+                sendSensorSettingsChangedBroadcast()
+            }
+        )
+
         Spacer(modifier = Modifier.height(16.dp))
 
         // 앱 설정
@@ -65,14 +155,14 @@ fun SettingsScreen(
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
         )
 
-        // 알림 설정
-        SwitchSettingItem(
-            icon = Icons.Default.Notifications,
-            title = "목표 달성 알림",
-            subtitle = "일일 걸음 목표 달성 시 알림 받기",
-            checked = notificationEnabled,
-            onCheckedChange = onNotificationChange
-        )
+        // 알림 설정 (주석 처리)
+//        SwitchSettingItem(
+//            icon = Icons.Default.Notifications,
+//            title = "목표 달성 알림",
+//            subtitle = "일일 걸음 목표 달성 시 알림 받기",
+//            checked = notificationEnabled,
+//            onCheckedChange = onNotificationChange
+//        )
 
         // 개인정보 보호
         SettingItem(
@@ -134,6 +224,18 @@ fun SettingsScreen(
         )
     }
 
+    if (showStrideDialog) {
+        StrideInputDialog(
+            currentStride = prefs.getUserStride(),
+            onDismiss = { showStrideDialog = false },
+            onConfirm = {
+                prefs.setUserStride(it)
+                sendUserDataChangedBroadcast()
+                showStrideDialog = false
+            }
+        )
+    }
+
     if (showPrivacyPolicyDialog) {
         PrivacyPolicyDialog(onDismiss = { showPrivacyPolicyDialog = false })
     }
@@ -166,6 +268,58 @@ fun SettingsScreen(
             }
         )
     }
+}
+
+@Composable
+private fun StrideInputDialog(
+    currentStride: Double,
+    onDismiss: () -> Unit,
+    onConfirm: (Double) -> Unit
+) {
+    var strideText by remember { mutableStateOf(String.format("%.1f", currentStride)) }
+    var isError by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("보폭 설정") },
+        text = {
+            Column {
+                Text("걸음 센서가 비활성화되었을 때 GPS 기반으로 걸음 수를 추정하는 데 사용됩니다.")
+                Spacer(modifier = Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = strideText,
+                    onValueChange = {
+                        strideText = it
+                        isError = false
+                    },
+                    label = { Text("보폭 (m)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    isError = isError,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val stride = strideText.toDoubleOrNull()
+                    if (stride != null && stride > 0.3 && stride < 1.5) { // 일반적인 보폭 범위
+                        onConfirm(stride)
+                    } else {
+                        isError = true
+                    }
+                }
+            ) {
+                Text("확인")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("취소")
+            }
+        }
+    )
 }
 
 @Composable

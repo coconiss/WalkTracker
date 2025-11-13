@@ -34,7 +34,7 @@ import kotlin.math.abs
 
 /**
  * 백그라운드에서 위치 및 활동 데이터를 추적하는 서비스입니다.
- * 걸음 수, 이동 거리, 칼로리, 고도, 이동 경로 등을 수집하고 주기적으로 Firebase에 동기화합니다.
+ * 걸음 수, 이동 거리, 칼로리, 높이, 이동 경로 등을 수집하고 주기적으로 Firebase에 동기화합니다.
  */
 class LocationTrackingService : Service(), SensorEventListener {
 
@@ -52,6 +52,11 @@ class LocationTrackingService : Service(), SensorEventListener {
     private lateinit var syncPrefs: SharedPreferencesManager
 
     private val altitudeCalculator = AltitudeCalculator()
+
+    // --- 센서 활성화 상태 ---
+    private var isGpsEnabled = true
+    private var isStepSensorEnabled = true
+    private var isPressureSensorEnabled = true
 
     // --- 일일 누적 데이터 ---
     private var stepsAtStartOfDay = 0L
@@ -142,7 +147,29 @@ class LocationTrackingService : Service(), SensorEventListener {
         const val ACTION_LOCATION_UPDATE = "com.walktracker.app.LOCATION_UPDATE"
         const val ACTION_REQUEST_LOCATION_UPDATE = "com.walktracker.app.REQUEST_LOCATION_UPDATE"
         const val EXTRA_LOCATION = "extra_location"
+        const val ACTION_SENSOR_SETTINGS_CHANGED = "com.walktracker.app.SENSOR_SETTINGS_CHANGED"
+        const val ACTION_USER_DATA_CHANGED = "com.walktracker.app.USER_DATA_CHANGED"
     }
+
+    private val userDataChangeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == ACTION_USER_DATA_CHANGED) {
+                Log.d(TAG, "사용자 데이터 변경 수신")
+                loadUserData()
+            }
+        }
+    }
+
+    private val sensorSettingsChangeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == ACTION_SENSOR_SETTINGS_CHANGED) {
+                Log.d(TAG, "센서 설정 변경 수신")
+                loadSensorSettings()
+                updateSensorRegistrations()
+            }
+        }
+    }
+
 
     private val activityTypeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -195,6 +222,8 @@ class LocationTrackingService : Service(), SensorEventListener {
 
         syncPrefs = SharedPreferencesManager(this)
 
+        loadSensorSettings()
+
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
         pressureSensor = sensorManager.getDefaultSensor(Sensor.TYPE_PRESSURE)
@@ -211,10 +240,7 @@ class LocationTrackingService : Service(), SensorEventListener {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, createNotification())
 
-        stepSensor?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
-            Log.d(TAG, "걸음수 센서 리스너 등록 완료")
-        }
+        updateSensorRegistrations()
 
         val localBroadcastManager = LocalBroadcastManager.getInstance(this)
         localBroadcastManager.registerReceiver(
@@ -229,6 +255,15 @@ class LocationTrackingService : Service(), SensorEventListener {
             resetDataReceiver,
             IntentFilter(ACTION_RESET_TODAY_DATA)
         )
+        localBroadcastManager.registerReceiver(
+            sensorSettingsChangeReceiver,
+            IntentFilter(ACTION_SENSOR_SETTINGS_CHANGED)
+        )
+        localBroadcastManager.registerReceiver(
+            userDataChangeReceiver,
+            IntentFilter(ACTION_USER_DATA_CHANGED)
+        )
+
 
         Log.d(TAG, "브로드캐스트 리시버 등록 완료")
 
@@ -238,6 +273,49 @@ class LocationTrackingService : Service(), SensorEventListener {
         startStillDetection()
 
         Log.d(TAG, "========== 서비스 초기화 완료 ==========")
+    }
+
+    private fun loadSensorSettings() {
+        isGpsEnabled = syncPrefs.isGpsEnabled()
+        isStepSensorEnabled = syncPrefs.isStepSensorEnabled()
+        isPressureSensorEnabled = syncPrefs.isPressureSensorEnabled()
+
+        // GPS와 걸음 센서 둘 다 꺼지는 것을 방지
+        if (!isGpsEnabled && !isStepSensorEnabled) {
+            isGpsEnabled = true // GPS를 기본으로 활성화
+            syncPrefs.setGpsEnabled(true)
+            Log.w(TAG, "GPS와 걸음 센서가 모두 비활성화되어 GPS를 강제로 활성화합니다.")
+        }
+
+        Log.d(TAG, "센서 설정 로드 - GPS: $isGpsEnabled, 걸음: $isStepSensorEnabled, 기압: $isPressureSensorEnabled")
+    }
+
+    private fun updateSensorRegistrations() {
+        // 걸음 센서
+        stepSensor?.let {
+            if (isStepSensorEnabled) {
+                sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+                Log.d(TAG, "걸음수 센서 리스너 등록")
+            } else {
+                sensorManager.unregisterListener(this, it)
+                Log.d(TAG, "걸음수 센서 리스너 해제")
+            }
+        }
+
+        // 기압 센서
+        pressureSensor?.let {
+            if (isPressureSensorEnabled) {
+                val samplingPeriodUs = (getUpdateInterval() * 1000).toInt()
+                sensorManager.registerListener(this, it, samplingPeriodUs)
+                Log.d(TAG, "기압 센서 리스너 등록")
+            } else {
+                sensorManager.unregisterListener(this, it)
+                Log.d(TAG, "기압 센서 리스너 해제")
+            }
+        }
+
+        // 위치 업데이트 (GPS)
+        updateLocationRequest()
     }
 
     override fun onDestroy() {
@@ -253,6 +331,9 @@ class LocationTrackingService : Service(), SensorEventListener {
         localBroadcastManager.unregisterReceiver(activityTypeReceiver)
         localBroadcastManager.unregisterReceiver(locationRequestReceiver)
         localBroadcastManager.unregisterReceiver(resetDataReceiver)
+        localBroadcastManager.unregisterReceiver(sensorSettingsChangeReceiver)
+        localBroadcastManager.unregisterReceiver(userDataChangeReceiver)
+
 
         resetAllData()
 
@@ -360,6 +441,7 @@ class LocationTrackingService : Service(), SensorEventListener {
 
         when (event.sensor.type) {
             Sensor.TYPE_STEP_COUNTER -> {
+                if (!isStepSensorEnabled) return
                 val totalStepsFromBoot = event.values[0].toLong()
                 if (initialStepCount == 0L) {
                     initialStepCount = totalStepsFromBoot
@@ -370,6 +452,7 @@ class LocationTrackingService : Service(), SensorEventListener {
                 updateAndBroadcast()
             }
             Sensor.TYPE_PRESSURE -> {
+                if (!isPressureSensorEnabled) return
                 val pressure = event.values[0]
                 if (pressure > 800f && pressure < 1100f) { // 유효한 기압 범위
                     lastPressureValue = pressure
@@ -413,6 +496,11 @@ class LocationTrackingService : Service(), SensorEventListener {
     }
 
     private fun handleNewLocation(location: Location) {
+        if (!isGpsEnabled) {
+            Log.d(TAG, "GPS 비활성화 상태 - 위치 업데이트 무시")
+            return
+        }
+
         Log.d(TAG, "---------- 새 위치 수신 ----------")
         Log.d(TAG, "위도:${location.latitude}, 경도:${location.longitude}, 정확도:${location.accuracy}m")
 
@@ -515,7 +603,7 @@ class LocationTrackingService : Service(), SensorEventListener {
         Log.d(TAG, "누적 거리: ${"%.3f".format(totalDistance)}km")
 
         val isMoving = speed > MIN_WALKING_SPEED_MPS
-        if (pressureSensor != null && lastPressureValue > 0f && pressureAtPreviousLocation != null) {
+        if (isPressureSensorEnabled && pressureSensor != null && lastPressureValue > 0f && pressureAtPreviousLocation != null) {
             val pressureChange = abs(lastPressureValue - pressureAtPreviousLocation!!)
             val threshold = when(currentActivityType) {
                 ActivityType.RUNNING -> PRESSURE_CHANGE_THRESHOLD_RUNNING
@@ -530,14 +618,17 @@ class LocationTrackingService : Service(), SensorEventListener {
                 )
                 if (altitudeGain > 0) {
                     totalAltitudeGain += altitudeGain
+                } else{
+                    totalAltitudeGain += altitudeGain * -1  //높이 변화가 있었지만 내려간 경우 -1을 곱하여 누적
                 }
+
             } else {
-                Log.w(TAG, "급격한 기압 변화 감지 (엘리베이터?), 고도 계산에서 제외: $pressureChange hPa")
+                Log.w(TAG, "급격한 기압 변화 감지, 높이 계산에서 제외: $pressureChange hPa")
             }
         }
 
 
-        if (stepSensor == null && userStride > 0) {
+        if (!isStepSensorEnabled && userStride > 0) {
             currentSteps = (totalDistance * 1000 / userStride).toLong()
         }
 
@@ -667,6 +758,8 @@ class LocationTrackingService : Service(), SensorEventListener {
                 userWeight = it.weight
                 Log.d(TAG, "사용자 데이터 - 체중:${userWeight}kg")
             }
+            userStride = syncPrefs.getUserStride()
+            Log.d(TAG, "사용자 데이터 - 보폭:${userStride}m")
         }
     }
 
@@ -733,14 +826,27 @@ class LocationTrackingService : Service(), SensorEventListener {
         updateLocationRequest()
     }
 
+    private fun getUpdateInterval(): Long {
+        return when (currentActivityType) {
+            ActivityType.RUNNING -> LOCATION_INTERVAL_RUNNING
+            ActivityType.WALKING -> LOCATION_INTERVAL_WALKING
+            ActivityType.STILL -> LOCATION_INTERVAL_STILL
+            else -> LOCATION_INTERVAL_WALKING
+        }
+    }
+
+
     /**
      * 배터리 최적화: 위치 업데이트 간격 조정
      */
     private fun updateLocationRequest() {
-        if (currentActivityType == ActivityType.VEHICLE) {
-            fusedLocationClient.removeLocationUpdates(locationCallback)
-            pressureSensor?.let { sensorManager.unregisterListener(this, it) }
-            enterStillMode()
+        fusedLocationClient.removeLocationUpdates(locationCallback)
+
+        if (!isGpsEnabled || currentActivityType == ActivityType.VEHICLE) {
+            Log.d(TAG, "GPS 비활성화 또는 차량 모드. 위치 업데이트 중지.")
+            if (currentActivityType == ActivityType.VEHICLE || !isGpsEnabled && !isStepSensorEnabled) {
+                enterStillMode()
+            }
             return
         }
 
@@ -752,15 +858,6 @@ class LocationTrackingService : Service(), SensorEventListener {
         }
 
         Log.d(TAG, "위치 요청 - 활동:$currentActivityType, 간격:${interval / 1000}초")
-
-        // 기압 센서 리스너 재등록 (간격 동기화)
-        pressureSensor?.let {
-            sensorManager.unregisterListener(this, it)
-            val samplingPeriodUs = (interval * 1000).toInt() // ms to us
-            sensorManager.registerListener(this, it, samplingPeriodUs)
-            Log.d(TAG, "기압 센서 리스너 재등록 - 샘플링 주기: ${samplingPeriodUs}us")
-        }
-
 
         val locationRequest = LocationRequest.Builder(priority, interval).apply {
             setMinUpdateIntervalMillis(interval / 2)
@@ -785,6 +882,7 @@ class LocationTrackingService : Service(), SensorEventListener {
 
         exitStillMode()
     }
+
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -857,7 +955,7 @@ class LocationTrackingService : Service(), SensorEventListener {
         isStillMode = true
         Log.d(TAG, "========== 절전 모드 진입 ==========")
 
-        pressureSensor?.let { sensorManager.unregisterListener(this, it) }
+        if(isPressureSensorEnabled) pressureSensor?.let { sensorManager.unregisterListener(this, it) }
 
         val locationRequest = LocationRequest.Builder(
             Priority.PRIORITY_LOW_POWER,

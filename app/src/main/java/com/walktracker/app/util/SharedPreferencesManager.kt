@@ -12,9 +12,17 @@ class SharedPreferencesManager(context: Context) {
         private const val KEY_UNSYNCED_DISTANCE = "unsynced_distance"
         private const val KEY_UNSYNCED_CALORIES = "unsynced_calories"
         private const val KEY_UNSYNCED_ALTITUDE = "unsynced_altitude" // 고도 키 추가
+
+        // 센서 설정 키
+        private const val KEY_GPS_ENABLED = "gps_enabled"
+        private const val KEY_STEP_SENSOR_ENABLED = "step_sensor_enabled"
+        private const val KEY_PRESSURE_SENSOR_ENABLED = "pressure_sensor_enabled"
+
+        // 사용자 데이터 키
+        private const val KEY_USER_STRIDE = "user_stride"
     }
 
-    fun addUnsyncedData(steps: Long, distance: Double, calories: Double, altitude: Double) { // 고도 파라미터 추가
+    fun addUnsyncedData(steps: Long, distance: Double, calories: Double, altitude: Double) { // 높이 파라미터 추가
         val editor = prefs.edit()
         editor.putLong(KEY_UNSYNCED_STEPS, prefs.getLong(KEY_UNSYNCED_STEPS, 0L) + steps)
         editor.putFloat(KEY_UNSYNCED_DISTANCE, prefs.getFloat(KEY_UNSYNCED_DISTANCE, 0f) + distance.toFloat())
@@ -44,4 +52,31 @@ class SharedPreferencesManager(context: Context) {
         editor.remove(KEY_UNSYNCED_ALTITUDE) // 고도 데이터 삭제
         editor.apply()
     }
+
+    // 센서 설정 저장
+    fun setGpsEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_GPS_ENABLED, enabled).apply()
+    }
+
+    fun setStepSensorEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_STEP_SENSOR_ENABLED, enabled).apply()
+    }
+
+    fun setPressureSensorEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_PRESSURE_SENSOR_ENABLED, enabled).apply()
+    }
+
+    // 센서 설정 불러오기 (기본값: true)
+    fun isGpsEnabled(): Boolean = prefs.getBoolean(KEY_GPS_ENABLED, true)
+
+    fun isStepSensorEnabled(): Boolean = prefs.getBoolean(KEY_STEP_SENSOR_ENABLED, true)
+
+    fun isPressureSensorEnabled(): Boolean = prefs.getBoolean(KEY_PRESSURE_SENSOR_ENABLED, true)
+
+    // 사용자 보폭 저장 및 불러오기
+    fun setUserStride(stride: Double) {
+        prefs.edit().putFloat(KEY_USER_STRIDE, stride.toFloat()).apply()
+    }
+
+    fun getUserStride(): Double = prefs.getFloat(KEY_USER_STRIDE, 0.7f).toDouble()
 }

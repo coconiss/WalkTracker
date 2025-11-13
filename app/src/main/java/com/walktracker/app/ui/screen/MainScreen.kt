@@ -115,15 +115,15 @@ fun MainScreen(
 
         Spacer(modifier = Modifier.height(12.dp)) // 카드 사이 간격 추가
 
-        // 고도 및 속도 정보 카드
+        // 높이 및 속도 정보 카드
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             StatCard(
                 modifier = Modifier.weight(1f),
-                icon = Icons.Default.Terrain, // 고도 아이콘
-                label = "상승 고도",
+                icon = Icons.Default.Terrain, // 높이 아이콘
+                label = "이동 높이",
                 value = String.format("%.1f", uiState.todayActivity?.altitude ?: 0.0),
                 unit = "m",
                 color = Color(0xFF3F51B5) // Indigo 색상
