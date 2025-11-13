@@ -3,6 +3,7 @@ from firebase_admin import credentials, firestore
 import datetime
 import os
 import calendar
+import pytz
 
 # --- Firebase 초기화 ---
 cred_json = os.environ.get('FIREBASE_CREDENTIALS_JSON')
@@ -102,25 +103,21 @@ def update_ranking_for_period(period_type: str, period_key: str):
 
 def main():
     """실행할 랭킹 업데이트 작업을 정의합니다."""
-    # GitHub Actions 워크플로우는 UTC 기준 15:00에 실행됩니다.
-    # 이는 한국 시간(KST) 기준 다음날 00:00에 해당합니다.
-    # 따라서, 스크립트가 실행되는 시점의 UTC 날짜는 집계하려는 '어제'의 KST 날짜와 동일합니다.
-    today_utc = datetime.date.today()
+    # 스크립트 실행 시간과 관계없이 항상 KST(한국 표준시) 기준으로 날짜를 계산합니다.
+    kst = pytz.timezone('Asia/Seoul')
+    now_kst = datetime.datetime.now(kst)
 
     # 1. 일간 랭킹 집계 (KST 기준 어제)
-    # 예를 들어, 10월 27일 15:00 UTC에 스크립트가 실행되면, today_utc는 '2023-10-27'입니다.
-    # 이는 한국 시간으로 10월 28일 00:00이므로, '어제'인 10월 27일의 랭킹을 집계하는 것이 맞습니다.
-    daily_key = today_utc.strftime("%Y-%m-%d")
+    yesterday_kst = now_kst - datetime.timedelta(days=1)
+    daily_key = yesterday_kst.strftime("%Y-%m-%d")
     update_ranking_for_period("daily", daily_key)
 
-    # 2. 이번 달의 월간 랭킹 집계
-    # 월간/연간 랭킹은 실행 시점까지의 데이터를 누적하여 보여주는 것이므로,
-    # UTC 오늘 날짜를 기준으로 집계합니다.
-    monthly_key = today_utc.strftime("%Y-%m")
+    # 2. 이번 달의 월간 랭킹 집계 (KST 기준)
+    monthly_key = now_kst.strftime("%Y-%m")
     update_ranking_for_period("monthly", monthly_key)
 
-    # 3. 올해의 연간 랭킹 집계
-    yearly_key = str(today_utc.year)
+    # 3. 올해의 연간 랭킹 집계 (KST 기준)
+    yearly_key = str(now_kst.year)
     update_ranking_for_period("yearly", yearly_key)
 
 
