@@ -74,6 +74,38 @@ class FirebaseRepository {
         auth.signOut()
     }
 
+    suspend fun deleteAccount(): Result<Unit> {
+        val userId = getCurrentUserId() ?: return Result.failure(Exception("User not signed in"))
+        return try {
+            // Delete all user data from Firestore
+            val activitiesSnapshot = activitiesCollection.whereEqualTo("userId", userId).get().await()
+            val rankingsSnapshot = rankingsCollection.whereEqualTo("userId", userId).get().await()
+
+            firestore.runBatch { batch ->
+                // Delete user document
+                batch.delete(usersCollection.document(userId))
+
+                // Delete daily activities
+                for (document in activitiesSnapshot.documents) {
+                    batch.delete(document.reference)
+                }
+
+                // Delete rankings
+                for (document in rankingsSnapshot.documents) {
+                    batch.delete(document.reference)
+                }
+            }.await()
+
+            // Delete user from Authentication
+            auth.currentUser?.delete()?.await()
+
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete account", e)
+            Result.failure(e)
+        }
+    }
+
     // --- User Data --- //
 
     suspend fun getCurrentUser(): User? {

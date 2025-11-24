@@ -111,6 +111,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         unregisterReceivers()
     }
 
+    fun deleteAccount() {
+        viewModelScope.launch {
+            val result = repository.deleteAccount()
+            if (result.isFailure) {
+                _uiState.update { it.copy(error = "계정 삭제에 실패했습니다.") }
+            }
+        }
+    }
+
     fun updateActivityData(steps: Long, distance: Double, calories: Double, altitude: Double, speed: Float) {
         _uiState.update { currentState ->
             val updatedActivity = (currentState.todayActivity ?: DailyActivity(

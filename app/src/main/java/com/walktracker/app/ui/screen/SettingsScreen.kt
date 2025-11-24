@@ -27,6 +27,7 @@ fun SettingsScreen(
     user: User?,
     onWeightUpdate: (Double) -> Unit,
     onSignOut: () -> Unit,
+    onDeleteAccount: () -> Unit,
     notificationEnabled: Boolean,
     onNotificationChange: (Boolean) -> Unit,
     onForceQuit: () -> Unit // 강제 종료 콜백 추가
@@ -39,6 +40,7 @@ fun SettingsScreen(
     var showPrivacyPolicyDialog by remember { mutableStateOf(false) }
     var showAppInfoDialog by remember { mutableStateOf(false) }
     var showForceQuitDialog by remember { mutableStateOf(false) } // 강제 종료 확인 다이얼로그 상태
+    var showDeleteAccountDialog by remember { mutableStateOf(false) }
 
     // 센서 설정 상태
     var gpsEnabled by remember { mutableStateOf(prefs.isGpsEnabled()) }
@@ -210,6 +212,21 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.width(8.dp))
             Text("로그아웃")
         }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // 회원탈퇴
+        OutlinedButton(
+            onClick = { showDeleteAccountDialog = true },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = MaterialTheme.colorScheme.error
+            )
+        ) {
+            Icon(imageVector = Icons.Default.PersonRemove, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("회원탈퇴")
+        }
     }
 
     // 다이얼로그
@@ -263,6 +280,31 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showForceQuitDialog = false }) {
+                    Text("취소")
+                }
+            }
+        )
+    }
+
+    // 회원 탈퇴 확인 다이얼로그
+    if (showDeleteAccountDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteAccountDialog = false },
+            title = { Text("회원 탈퇴") },
+            text = { Text("정말 탈퇴하시겠습니까? 탈퇴를 하면 모든 데이터가 지워지고 복구가 불가능합니다.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteAccount()
+                        showDeleteAccountDialog = false
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("탈퇴")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteAccountDialog = false }) {
                     Text("취소")
                 }
             }

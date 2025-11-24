@@ -125,6 +125,14 @@ class MainActivity : ComponentActivity() {
                                             popUpTo("main") { inclusive = true }
                                         }
                                     },
+                                    onDeleteAccount = { 
+                                        mainViewModel.deleteAccount()
+                                        stopTrackingService()
+                                        clearAllData()
+                                        navController.navigate("login") {
+                                            popUpTo("main") { inclusive = true }
+                                        }
+                                    },
                                     onForceQuit = {
                                         stopTrackingService()
                                         finishAffinity()
@@ -150,7 +158,7 @@ class MainActivity : ComponentActivity() {
     private fun showPermissionDialog() {
         AlertDialog.Builder(this)
             .setTitle("권한 안내 (필수)")
-            .setMessage("앱의 핵심 기능을 사용하려면 필수 권한을 허용해야 합니다. '허용' 버튼을 눌러 설정 화면으로 이동한 후, 모든 권한을 허용해주세요.")
+            .setMessage("앱의 핵심 기능을 사용하려면 필수 권한을 허용해야 합니다. \'허용\' 버튼을 눌러 설정 화면으로 이동한 후, 모든 권한을 허용해주세요.")
             .setPositiveButton("허용") { _, _ ->
                 val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                     data = Uri.fromParts("package", packageName, null)
@@ -252,6 +260,7 @@ class MainActivity : ComponentActivity() {
 fun MainApp(
     viewModel: MainViewModel,
     onSignOut: () -> Unit,
+    onDeleteAccount: () -> Unit,
     onForceQuit: () -> Unit,
     navController: NavHostController
 ) {
@@ -308,6 +317,7 @@ fun MainApp(
                         viewModel.updateUserWeight(it)
                     },
                     onSignOut = onSignOut,
+                    onDeleteAccount = onDeleteAccount,
                     notificationEnabled = uiState.notificationEnabled,
                     onNotificationChange = {
                         viewModel.setNotificationEnabled(it)

@@ -933,9 +933,9 @@ class LocationTrackingService : Service(), SensorEventListener {
 
         val (priority, interval) = when (currentActivityType) {
             ActivityType.RUNNING -> Priority.PRIORITY_HIGH_ACCURACY to LOCATION_INTERVAL_RUNNING
-            ActivityType.WALKING -> Priority.PRIORITY_HIGH_ACCURACY to LOCATION_INTERVAL_WALKING
+            ActivityType.WALKING -> Priority.PRIORITY_BALANCED_POWER_ACCURACY to LOCATION_INTERVAL_WALKING
             ActivityType.STILL -> Priority.PRIORITY_BALANCED_POWER_ACCURACY to LOCATION_INTERVAL_STILL
-            else -> Priority.PRIORITY_HIGH_ACCURACY to LOCATION_INTERVAL_WALKING
+            else -> Priority.PRIORITY_BALANCED_POWER_ACCURACY to LOCATION_INTERVAL_WALKING
         }
 
         Log.d(TAG, "위치 요청 - 활동:$currentActivityType, 간격:${interval / 1000}초")
