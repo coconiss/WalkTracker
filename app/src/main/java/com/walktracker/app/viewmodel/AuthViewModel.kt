@@ -25,7 +25,7 @@ class AuthViewModel : ViewModel() {
             _loginState.value = if (result.isSuccess) {
                 LoginState.Success
             } else {
-                LoginState.Error(result.exceptionOrNull()?.message ?: "알 수 없는 오류가 발생했습니다.")
+                LoginState.Error(getKoreanErrorMessage(result.exceptionOrNull()))
             }
         }
     }
@@ -37,8 +37,20 @@ class AuthViewModel : ViewModel() {
             _signUpState.value = if (result.isSuccess) {
                 SignUpState.Success
             } else {
-                SignUpState.Error(result.exceptionOrNull()?.message ?: "알 수 없는 오류가 발생했습니다.")
+                SignUpState.Error(getKoreanErrorMessage(result.exceptionOrNull()))
             }
+        }
+    }
+
+    private fun getKoreanErrorMessage(exception: Throwable?): String {
+        val message = exception?.message ?: return "알 수 없는 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+        return when {
+            message.contains("There is no user record corresponding to this identifier") -> "가입되지 않은 이메일입니다."
+            message.contains("INVALID_LOGIN_CREDENTIALS") -> "이메일 또는 비밀번호가 일치하지 않습니다."
+            message.contains("The email address is badly formatted") -> "올바르지 않은 이메일 형식입니다."
+            message.contains("The email address is already in use by another account") -> "이미 사용 중인 이메일입니다."
+            message.contains("Password should be at least 6 characters") -> "비밀번호는 6자리 이상이어야 합니다."
+            else -> "알 수 없는 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
         }
     }
 

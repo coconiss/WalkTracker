@@ -13,11 +13,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.walktracker.app.model.RankingEntry
 import com.walktracker.app.viewmodel.RankingPeriod
 import com.walktracker.app.viewmodel.RankingUiState
@@ -41,7 +39,15 @@ fun RankingScreen(
         // 내 순위 카드
         MyRankCard(rank = rankingState.userRank)
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "매일 0시~1시 갱신",
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+        )
 
         // 랭킹 리스트
         if (rankingState.isLoading) {

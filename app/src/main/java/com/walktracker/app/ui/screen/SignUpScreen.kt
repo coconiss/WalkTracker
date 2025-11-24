@@ -65,10 +65,15 @@ fun SignUpScreen(navController: NavController, onSignUpSuccess: () -> Unit) {
         OutlinedTextField(
             value = password,
             onValueChange = { password = it; error = null },
-            label = { Text("비밀번호 (6자리 이상)") },
+            label = { Text("비밀번호") },
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth(),
             isError = error != null
+        )
+        Text(
+            text = "비밀번호는 6~11자리로 입력해주세요.",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(start = 16.dp, top = 4.dp, end = 16.dp)
         )
         Spacer(modifier = Modifier.height(8.dp))
 
@@ -107,8 +112,8 @@ fun SignUpScreen(navController: NavController, onSignUpSuccess: () -> Unit) {
                         error = "비밀번호가 일치하지 않습니다."
                         return@Button
                     }
-                    if (password.length < 6) {
-                        error = "비밀번호는 6자리 이상이어야 합니다."
+                    if (password.length < 6 || password.length > 11) {
+                        error = "비밀번호는 6~11자리로 입력해주세요."
                         return@Button
                     }
                     val weightValue = weight.toDoubleOrNull()

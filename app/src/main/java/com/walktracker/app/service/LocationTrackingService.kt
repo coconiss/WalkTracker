@@ -109,8 +109,8 @@ class LocationTrackingService : Service(), SensorEventListener {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "WalkTrackerChannel"
 
-        // 주기적 동기화 간격 (5분) 실제 배포 시 변경 해야 함.
-        private const val SYNC_INTERVAL = 300000L
+        // 주기적 동기화 간격 (10분) 실제 배포 시 변경 해야 함.
+        private const val SYNC_INTERVAL = 600000L
 
         // 위치 업데이트 간격
         private const val LOCATION_INTERVAL_WALKING = 20000L
