@@ -87,6 +87,7 @@
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
             android:value="ca-app-pub-3940256099942544~3347511713"/>
+            <!-- android:value="ca-app-pub-3245182432537705~5352561340"/> 실제 key-->
 
         <!-- OSM Configuration -->
         <meta-data

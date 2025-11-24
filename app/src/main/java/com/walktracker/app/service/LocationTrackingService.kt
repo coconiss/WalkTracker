@@ -74,6 +74,10 @@ class LocationTrackingService : Service(), SensorEventListener {
     private var isInitialDataLoaded = false
     private var lastProcessedDate: String = ""
 
+    // --- 속도 추적 개선 ---
+    private var lastSpeedUpdateTime = 0L
+    private var lastValidMovementTime = 0L
+
     // --- 위치 및 활동 관련 데이터 ---
     private var previousLocation: Location? = null
     private var currentActivityType = ActivityType.WALKING
@@ -105,34 +109,38 @@ class LocationTrackingService : Service(), SensorEventListener {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "WalkTrackerChannel"
 
-        // 주기적 동기화 간격 (5분)
+        // 주기적 동기화 간격 (5분) 실제 배포 시 변경 해야 함.
         private const val SYNC_INTERVAL = 300000L
 
-        // 위치 업데이트 간격 - 약간 증가
-        private const val LOCATION_INTERVAL_WALKING = 20000L // 15초 -> 20초
-        private const val LOCATION_INTERVAL_RUNNING = 15000L // 10초 -> 15초
-        private const val LOCATION_INTERVAL_STILL = 120000L // 30초 -> 2분
+        // 위치 업데이트 간격
+        private const val LOCATION_INTERVAL_WALKING = 20000L
+        private const val LOCATION_INTERVAL_RUNNING = 15000L
+        private const val LOCATION_INTERVAL_STILL = 120000L
 
         // 거리/속도 임계값
         private const val MIN_DISTANCE_THRESHOLD = 5.0
-        private const val MAX_SPEED_MPS = 6.5
-        private const val MIN_WALKING_SPEED_MPS = 0.5f
+        private const val MAX_SPEED_MPS = 5.0  // 18km/h - 달리기 최고 속도
+        private const val MAX_WALKING_SPEED_MPS = 2.2f  // 8km/h - 빠른 걷기 최고 속도
+        private const val MIN_WALKING_SPEED_MPS = 0.5f  // 2.9km/h - 최소 걷기 속도
         private const val MAX_TIME_DIFFERENCE_SECONDS = 60L
         private const val MIN_ACCURACY_METERS = 50f
 
-        // 절전 모드 진입 시간 - 단축
-        private const val STILL_DETECTION_TIME = 120000L // 5분 -> 2분
+        // 속도 타임아웃: 이 시간 동안 이동이 없으면 속도를 0으로 리셋
+        private const val SPEED_TIMEOUT_MS = 10000L  // 10초
+
+        // 절전 모드 진입 시간
+        private const val STILL_DETECTION_TIME = 120000L
 
         // 활동 전환 안정화 시간
         private const val TRANSITION_STABILIZATION_TIME = 20000L
         private const val TRANSITION_BUFFER_SIZE = 3
 
-        // 기압 변화 임계값 (hPa). 엘리베이터 등 급격한 변화 무시.
+        // 기압 변화 임계값 (hPa)
         private const val PRESSURE_CHANGE_THRESHOLD_WALKING = 0.2f
         private const val PRESSURE_CHANGE_THRESHOLD_RUNNING = 0.3f
 
         // UI 업데이트 throttle
-        private const val BROADCAST_THROTTLE_MS = 3000L // 3초마다 최대 1회
+        private const val BROADCAST_THROTTLE_MS = 3000L
 
         private const val TAG = "LocationTrackingService"
 
@@ -169,7 +177,6 @@ class LocationTrackingService : Service(), SensorEventListener {
             }
         }
     }
-
 
     private val activityTypeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -264,13 +271,13 @@ class LocationTrackingService : Service(), SensorEventListener {
             IntentFilter(ACTION_USER_DATA_CHANGED)
         )
 
-
         Log.d(TAG, "브로드캐스트 리시버 등록 완료")
 
         startLocationTracking()
         startActivityRecognition()
         startPeriodicSync()
         startStillDetection()
+        startSpeedMonitoring()  // 속도 모니터링 시작
 
         Log.d(TAG, "========== 서비스 초기화 완료 ==========")
     }
@@ -282,7 +289,7 @@ class LocationTrackingService : Service(), SensorEventListener {
 
         // GPS와 걸음 센서 둘 다 꺼지는 것을 방지
         if (!isGpsEnabled && !isStepSensorEnabled) {
-            isGpsEnabled = true // GPS를 기본으로 활성화
+            isGpsEnabled = true
             syncPrefs.setGpsEnabled(true)
             Log.w(TAG, "GPS와 걸음 센서가 모두 비활성화되어 GPS를 강제로 활성화합니다.")
         }
@@ -334,7 +341,6 @@ class LocationTrackingService : Service(), SensorEventListener {
         localBroadcastManager.unregisterReceiver(sensorSettingsChangeReceiver)
         localBroadcastManager.unregisterReceiver(userDataChangeReceiver)
 
-
         resetAllData()
 
         serviceScope.cancel()
@@ -349,7 +355,7 @@ class LocationTrackingService : Service(), SensorEventListener {
         totalDistance = 0.0
         totalCalories = 0.0
         totalAltitudeGain = 0.0
-        currentSpeed = 0.0f
+        resetSpeed()
         initialStepCount = 0L
         lastPressureValue = 0f
         pressureAtPreviousLocation = null
@@ -362,6 +368,43 @@ class LocationTrackingService : Service(), SensorEventListener {
         caloriesSynced = 0.0
         altitudeSynced = 0.0
         isInitialDataLoaded = false
+    }
+
+    /**
+     * 속도를 0으로 리셋하고 타임스탬프 업데이트
+     */
+    private fun resetSpeed() {
+        currentSpeed = 0.0f
+        lastSpeedUpdateTime = System.currentTimeMillis()
+        lastValidMovementTime = 0L
+        Log.d(TAG, "속도 리셋: 0.0 m/s")
+    }
+
+    /**
+     * 주기적으로 속도를 모니터링하여 타임아웃 시 0으로 리셋
+     */
+    private fun startSpeedMonitoring() {
+        serviceScope.launch {
+            Log.d(TAG, "속도 모니터링 시작")
+            while (isActive) {
+                delay(2000L)  // 2초마다 체크
+                checkSpeedTimeout()
+            }
+        }
+    }
+
+    /**
+     * 속도 타임아웃 체크: 일정 시간 이동이 없으면 속도를 0으로
+     */
+    private fun checkSpeedTimeout() {
+        if (currentSpeed > 0) {
+            val timeSinceLastUpdate = System.currentTimeMillis() - lastSpeedUpdateTime
+            if (timeSinceLastUpdate > SPEED_TIMEOUT_MS) {
+                Log.d(TAG, "속도 타임아웃 (${timeSinceLastUpdate}ms) - 속도를 0으로 리셋")
+                resetSpeed()
+                updateAndBroadcast()
+            }
+        }
     }
 
     private fun startPeriodicSync() {
@@ -454,7 +497,7 @@ class LocationTrackingService : Service(), SensorEventListener {
             Sensor.TYPE_PRESSURE -> {
                 if (!isPressureSensorEnabled) return
                 val pressure = event.values[0]
-                if (pressure > 800f && pressure < 1100f) { // 유효한 기압 범위
+                if (pressure > 800f && pressure < 1100f) {
                     lastPressureValue = pressure
                 }
             }
@@ -470,16 +513,25 @@ class LocationTrackingService : Service(), SensorEventListener {
 
         when {
             to == ActivityType.STILL -> {
-                currentSpeed = 0.0f
+                resetSpeed()
                 broadcastActivityUpdate(forceImmediate = true)
             }
-
+            // 차량 모드로 전환 시 데이터 리셋
+            to == ActivityType.VEHICLE -> {
+                Log.d(TAG, "→차량: 데이터 리셋")
+                previousLocation = null
+                transitionLocationBuffer.clear()
+                resetSpeed()
+                altitudeCalculator.reset()
+                pressureAtPreviousLocation = null
+            }
+            // 차량에서 도보로 전환 시 데이터 리셋
             from == ActivityType.VEHICLE &&
                     (to == ActivityType.WALKING || to == ActivityType.RUNNING) -> {
                 Log.d(TAG, "차량→도보: 데이터 리셋")
                 previousLocation = null
                 transitionLocationBuffer.clear()
-                currentSpeed = 0.0f
+                resetSpeed()
                 altitudeCalculator.reset()
                 pressureAtPreviousLocation = null
             }
@@ -487,6 +539,7 @@ class LocationTrackingService : Service(), SensorEventListener {
                     (to == ActivityType.WALKING || to == ActivityType.RUNNING) -> {
                 Log.d(TAG, "정지→활동: 전환 버퍼 리셋")
                 transitionLocationBuffer.clear()
+                resetSpeed()
             }
         }
     }
@@ -513,8 +566,12 @@ class LocationTrackingService : Service(), SensorEventListener {
         }
 
         if (currentActivityType == ActivityType.VEHICLE) {
-            Log.d(TAG, "차량 모드 - 위치만 업데이트")
+            Log.d(TAG, "차량 모드 - 위치만 업데이트, 속도는 0으로 유지")
             previousLocation = location
+            if (currentSpeed != 0.0f) {
+                resetSpeed()
+                updateAndBroadcast()
+            }
             broadcastLocationUpdate()
             return
         }
@@ -560,7 +617,9 @@ class LocationTrackingService : Service(), SensorEventListener {
             Log.d(TAG, "시간차 초과 - 리셋")
             previousLocation = null
             pressureAtPreviousLocation = null
+            resetSpeed()
             broadcastLocationUpdate()
+            updateAndBroadcast()
             previousLocation = location
             return
         }
@@ -569,15 +628,27 @@ class LocationTrackingService : Service(), SensorEventListener {
         Log.d(TAG, "이동 거리: ${"%.2f".format(distance)}m")
 
         if (distance < MIN_DISTANCE_THRESHOLD) {
-            Log.d(TAG, "거리 부족 - 무시")
+            Log.d(TAG, "거리 부족 - 무시. 다음 계산을 위해 위치는 업데이트합니다.")
+            previousLocation = location
+            // 거리가 부족하면 정지 상태로 간주하고 속도 감소
+            if (currentSpeed > 0) {
+                val timeSinceLastMovement = System.currentTimeMillis() - lastValidMovementTime
+                if (timeSinceLastMovement > SPEED_TIMEOUT_MS / 2) {  // 5초 후
+                    Log.d(TAG, "유효한 이동 없음 - 속도를 0으로 설정")
+                    resetSpeed()
+                    updateAndBroadcast()
+                }
+            }
             return
         }
 
-        val speed = calculateSpeed(location, prev, distance, timeDifferenceSeconds)
-        Log.d(TAG, "속도: ${"%.2f".format(speed)}m/s")
+        // GPS 점프를 감지하기 위해 원시 속도를 먼저 계산합니다.
+        val rawSpeed = if (timeDifferenceSeconds > 0) (distance / timeDifferenceSeconds) else 0f
+        Log.d(TAG, "원시 속도: ${"%.2f".format(rawSpeed)}m/s")
 
-        if (speed > MAX_SPEED_MPS) {
-            Log.d(TAG, "최대 속도 초과")
+        // GPS 점프 필터링 1단계: 물리적으로 불가능한 속도
+        if (rawSpeed > MAX_SPEED_MPS) {
+            Log.d(TAG, "최대 속도 초과 (GPS 점프 감지) - 데이터를 리셋합니다.")
             previousLocation = null
             pressureAtPreviousLocation = null
             broadcastLocationUpdate()
@@ -585,11 +656,27 @@ class LocationTrackingService : Service(), SensorEventListener {
             return
         }
 
-        if (currentActivityType == ActivityType.WALKING && speed < MIN_WALKING_SPEED_MPS) {
-            Log.d(TAG, "걷기 속도 미달")
+        // GPS 점프 필터링 2단계: 활동 유형별 속도 검증
+        if (currentActivityType == ActivityType.WALKING && rawSpeed > MAX_WALKING_SPEED_MPS) {
+            Log.d(TAG, "걷기 모드에서 비정상적 속도 감지 (${"%.2f".format(rawSpeed)}m/s) - 무시")
             previousLocation = null
             pressureAtPreviousLocation = null
             broadcastLocationUpdate()
+            previousLocation = location
+            return
+        }
+
+        // GPS 점프가 아닌 것으로 확인된 후에만 속도를 보정(smoothing)합니다.
+        val speed = smoothSpeed(rawSpeed)
+        Log.d(TAG, "보정 속도: ${"%.2f".format(speed)}m/s")
+
+        if (currentActivityType == ActivityType.WALKING && speed < MIN_WALKING_SPEED_MPS) {
+            Log.d(TAG, "걷기 속도 미달 - 속도를 0으로 설정")
+            previousLocation = null
+            pressureAtPreviousLocation = null
+            resetSpeed()
+            broadcastLocationUpdate()
+            updateAndBroadcast()
             previousLocation = location
             return
         }
@@ -597,10 +684,12 @@ class LocationTrackingService : Service(), SensorEventListener {
         Log.d(TAG, "========== 유효한 이동 - 데이터 업데이트 ==========")
 
         lastActivityTime = System.currentTimeMillis()
+        lastValidMovementTime = System.currentTimeMillis()
         currentSpeed = speed
+        lastSpeedUpdateTime = System.currentTimeMillis()
         totalDistance += distance / 1000.0
 
-        Log.d(TAG, "누적 거리: ${"%.3f".format(totalDistance)}km")
+        Log.d(TAG, "누적 거리: ${"%.3f".format(totalDistance)}km, 현재 속도: ${"%.2f".format(currentSpeed)}m/s")
 
         val isMoving = speed > MIN_WALKING_SPEED_MPS
         if (isPressureSensorEnabled && pressureSensor != null && lastPressureValue > 0f && pressureAtPreviousLocation != null) {
@@ -619,14 +708,12 @@ class LocationTrackingService : Service(), SensorEventListener {
                 if (altitudeGain > 0) {
                     totalAltitudeGain += altitudeGain
                 } else{
-                    totalAltitudeGain += altitudeGain * -1  //높이 변화가 있었지만 내려간 경우 -1을 곱하여 누적
+                    totalAltitudeGain += altitudeGain * -1
                 }
-
             } else {
                 Log.w(TAG, "급격한 기압 변화 감지, 높이 계산에서 제외: $pressureChange hPa")
             }
         }
-
 
         if (!isStepSensorEnabled && userStride > 0) {
             currentSteps = (totalDistance * 1000 / userStride).toLong()
@@ -656,21 +743,13 @@ class LocationTrackingService : Service(), SensorEventListener {
         broadcastLocationUpdate()
     }
 
-    private fun calculateSpeed(
-        location: Location,
-        previousLocation: Location,
-        distance: Float,
-        timeDiffSeconds: Long
-    ): Float {
-        if (location.hasSpeed() && location.speed > 0) {
-            return location.speed
-        }
-
-        val calculatedSpeed = distance / timeDiffSeconds
-
+    private fun smoothSpeed(calculatedSpeed: Float): Float {
+        // 속도 스무딩: 급격한 속도 변화를 제한하여 측정치를 안정화시킵니다.
+        // 이 함수는 GPS 점프가 이미 필터링된 후에 호출되어야 합니다.
         if (currentSpeed > 0) {
             val speedDiff = abs(calculatedSpeed - currentSpeed)
-            val maxSpeedChange = 2.0f
+            // 초당 1.0m/s (3.6km/h) 이상 속도 변화는 비정상으로 간주 (가속도 제한)
+            val maxSpeedChange = 1.0f
 
             if (speedDiff > maxSpeedChange) {
                 return if (calculatedSpeed > currentSpeed) {
@@ -680,7 +759,6 @@ class LocationTrackingService : Service(), SensorEventListener {
                 }
             }
         }
-
         return calculatedSpeed
     }
 
@@ -705,6 +783,7 @@ class LocationTrackingService : Service(), SensorEventListener {
         routePoints.clear()
         syncPrefs.clearUnsyncedData()
         altitudeCalculator.reset()
+        resetSpeed()
         updateAndBroadcast()
     }
 
@@ -739,6 +818,8 @@ class LocationTrackingService : Service(), SensorEventListener {
             }
             LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
             lastBroadcastTime = now
+
+            Log.d(TAG, "UI 업데이트 브로드캐스트 - 속도: ${"%.2f".format(currentSpeed)}m/s")
         }
     }
 
@@ -804,7 +885,8 @@ class LocationTrackingService : Service(), SensorEventListener {
         val contentText = if (isStillMode) {
             "절전 모드 - 오늘: ${totalStepsToday}걸음"
         } else {
-            String.format(Locale.US, "오늘: %d걸음 • %.2fkm", totalStepsToday, totalDistanceToday)
+            String.format(Locale.US, "오늘: %d걸음 • %.2fkm • %.1fkm/h",
+                totalStepsToday, totalDistanceToday, currentSpeed * 3.6)
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -834,7 +916,6 @@ class LocationTrackingService : Service(), SensorEventListener {
             else -> LOCATION_INTERVAL_WALKING
         }
     }
-
 
     /**
      * 배터리 최적화: 위치 업데이트 간격 조정
@@ -882,7 +963,6 @@ class LocationTrackingService : Service(), SensorEventListener {
 
         exitStillMode()
     }
-
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {

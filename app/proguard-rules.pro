@@ -1,25 +1,57 @@
 # Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Keep all data classes in the project. This is important for libraries like Firebase
+# that use reflection to serialize/deserialize data.
+-keep class com.walktracker.app.model.** { *; }
+-keep class com.walktracker.app.viewmodel.** { *; }
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Keep class members for data classes, which are often used with reflection.
+-keepclassmembers class * extends kotlin.Metadata { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Firebase and Google Play Services
+-keep class com.google.android.gms.common.api.internal.IStatusCallback { *; }
+-keep class com.google.firebase.** { *; }
+-keepattributes Signature
+-keepattributes *Annotation*
+-keep class com.google.android.gms.internal.** { *; }
 
+# Google Mobile Ads SDK
+-keep public class com.google.android.gms.ads.** {
+   public *;
+}
+
+-keep public class com.google.ads.** {
+   public *;
+}
+
+# OSMDroid
+-keep class org.osmdroid.** { *; }
+-keep interface org.osmdroid.** { *; }
+
+# Jetpack Compose
+-keep class androidx.compose.runtime.Composable { *; }
+-keepclassmembers class **.R$* {
+    public static <fields>;
+}
+
+# Keep the following for reflection used by some libraries
+-keepclassmembers,allowobfuscation class * {
+    @com.google.firebase.firestore.PropertyName <methods>;
+}
+
+# Keep setters in data classes for Firestore
+-keepclassmembers public class com.walktracker.app.model.** {
+    <init>();
+    void set*(***);
+    *** get*();
+}
+
+
+# General rules that are often useful
 -assumenosideeffects class android.util.Log {
+    public static int v(...);
     public static int d(...);
+    public static int i(...);
+    public static int w(...);
+    public static int e(...);
 }

@@ -359,6 +359,7 @@ fun AdMobBanner() {
         factory = {
             AdView(context).apply {
                 setAdSize(AdSize.BANNER)
+                //adUnitId = "ca-app-pub-3245182432537705/5154593094" //실제 key
                 adUnitId = "ca-app-pub-3940256099942544/6300978111"
                 loadAd(AdRequest.Builder().build())
             }
