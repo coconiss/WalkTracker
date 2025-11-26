@@ -1,43 +1,39 @@
-# .github/workflows/ranking_updater.yml
+  # .github/workflows/ranking_updater.yml
 
-name: Update Firestore Rankings
+  name: Update Firestore Rankings
 
-on:
-  # 한국 시간(KST)으로 매일 00시 정각에 실행되도록 UTC 기준 15:00로 설정
-  schedule:
-    - cron: '0 15 * * *'
-  
-  # 수동 실행을 위한 옵션
-  workflow_dispatch:
+  on:
+    schedule:
+      # 한국 시간(KST)으로 매일 00시 정각에 실행되도록 UTC 기준 15:00로 설정
+      - cron: '0 15 * * *'
 
-jobs:
-  update-firestore-rankings:
-    runs-on: ubuntu-latest
+    # 수동 실행을 위한 옵션
+    workflow_dispatch:
 
-    steps:
-      # 1. 저장소 코드를 체크아웃합니다.
-      - name: Checkout repository
-        uses: actions/checkout@v4
+  jobs:
+    update-firestore-rankings:
+      runs-on: ubuntu-latest
 
-      # 2. Python 환경을 설정합니다.
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
+      steps:
+        # 1. 저장소 코드를 체크아웃합니다.
+        - name: Checkout repository
+          uses: actions/checkout@v4
 
-      # 3. Python 의존성 라이브러리를 설치합니다.
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install firebase-admin pytz
+        # 2. Python 환경을 설정합니다.
+        - name: Set up Python
+          uses: actions/setup-python@v5
+          with:
+            python-version: '3.10'
 
-      # 4. (이제 원인을 알았으니 이 디버깅 스텝은 삭제해도 됩니다)
-      - name: "DEBUG: List all files"
-        run: ls -R
+        # 3. Python 의존성 라이브러리를 설치합니다.
+        - name: Install dependencies
+          run: |
+            python -m pip install --upgrade pip
+            pip install firebase-admin pytz
 
-      # 5. 스크립트를 실행합니다. 'scripts'를 'script'로 수정했습니다.
-      - name: Run ranking update script
-        env:
-          # GitHub Secrets에 저장한 Firebase 인증 키를 환경 변수로 주입합니다.
-          FIREBASE_CREDENTIALS_JSON: ${{ secrets.FIREBASE_CREDENTIALS }}
-        run: python script/rank_updater.py
+        # 4. 스크립트를 실행합니다.
+        - name: Run ranking update script
+          env:
+            # GitHub Secrets에 저장한 Firebase 인증 키를 환경 변수로 주입합니다.
+            FIREBASE_CREDENTIALS_JSON: ${{ secrets.FIREBASE_CREDENTIALS }}
+          run: python script/rank_updater.py
