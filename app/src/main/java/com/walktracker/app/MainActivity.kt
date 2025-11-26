@@ -158,7 +158,7 @@ class MainActivity : ComponentActivity() {
     private fun showPermissionDialog() {
         AlertDialog.Builder(this)
             .setTitle("권한 안내 (필수)")
-            .setMessage("앱의 핵심 기능을 사용하려면 필수 권한을 허용해야 합니다. \'허용\' 버튼을 눌러 설정 화면으로 이동한 후, 모든 권한을 허용해주세요.")
+            .setMessage("앱의 핵심 기능을 사용하려면 필수 권한을 허용해야 합니다. '허용' 버튼을 눌러 설정 화면으로 이동한 후, 모든 권한을 허용해주세요.")
             .setPositiveButton("허용") { _, _ ->
                 val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                     data = Uri.fromParts("package", packageName, null)
@@ -267,6 +267,10 @@ fun MainApp(
     val appNavController = rememberNavController()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val rankingState by viewModel.rankingState.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) {
+        viewModel.requestLocationUpdate()
+    }
 
     Scaffold(
         bottomBar = {
