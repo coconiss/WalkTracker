@@ -1,5 +1,6 @@
 package com.walktracker.app.repository
 
+import android.content.Context
 import android.util.Log
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
@@ -7,32 +8,29 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+import com.walktracker.app.data.local.WalkTrackerDatabase
+import com.walktracker.app.data.local.entity.LocalDailyActivityEntity
 import com.walktracker.app.model.*
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
 import java.util.*
 
-class FirebaseRepository {
+class FirebaseRepository(context: Context) {
     private val auth = FirebaseAuth.getInstance()
     private val firestore = FirebaseFirestore.getInstance()
+    private val database = WalkTrackerDatabase.getDatabase(context)
+    private val dailyActivityDao = database.dailyActivityDao()
+    private val gson = Gson()
 
     private val usersCollection = firestore.collection("users")
     private val activitiesCollection = firestore.collection("daily_activities")
     private val rankingsCollection = firestore.collection("rankings")
-
-    // 랭킹 배치 업데이트를 위한 큐
-    // private val pendingRankingUpdates = mutableMapOf<String, RankingUpdate>()
-
-    data class RankingUpdate(
-        val userId: String,
-        val displayName: String,
-        val distance: Double,
-        val period: String,
-        val periodKey: String
-    )
 
     companion object {
         private const val TAG = "FirebaseRepository"
@@ -77,28 +75,24 @@ class FirebaseRepository {
     suspend fun deleteAccount(): Result<Unit> {
         val userId = getCurrentUserId() ?: return Result.failure(Exception("User not signed in"))
         return try {
-            // Delete all user data from Firestore
+            // Room 데이터 삭제
+            dailyActivityDao.deleteAllForUser(userId)
+
+            // Firestore 데이터 삭제
             val activitiesSnapshot = activitiesCollection.whereEqualTo("userId", userId).get().await()
             val rankingsSnapshot = rankingsCollection.whereEqualTo("userId", userId).get().await()
 
             firestore.runBatch { batch ->
-                // Delete user document
                 batch.delete(usersCollection.document(userId))
-
-                // Delete daily activities
                 for (document in activitiesSnapshot.documents) {
                     batch.delete(document.reference)
                 }
-
-                // Delete rankings
                 for (document in rankingsSnapshot.documents) {
                     batch.delete(document.reference)
                 }
             }.await()
 
-            // Delete user from Authentication
             auth.currentUser?.delete()?.await()
-
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to delete account", e)
@@ -135,19 +129,12 @@ class FirebaseRepository {
         }
     }
 
-    // --- Activity Data --- //
+    // --- Activity Data (Room 중심) --- //
 
-    suspend fun updateDailyActivity(userId: String, date: String, activity: DailyActivity): Result<Unit> {
-        return try {
-            val docId = "${userId}_$date"
-            activitiesCollection.document(docId).set(activity).await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    suspend fun incrementDailyActivity(
+    /**
+     * Room에 데이터 증분 저장 (로컬 우선)
+     */
+    suspend fun incrementDailyActivityLocal(
         userId: String,
         date: String,
         steps: Long,
@@ -155,130 +142,110 @@ class FirebaseRepository {
         calories: Double,
         altitude: Double,
         routes: List<RoutePoint> = emptyList()
-    ): Result<Unit> = try {
-        var totalDistance = 0.0
-        var userName = ""
-
-        firestore.runTransaction { transaction ->
-            val userRef = usersCollection.document(userId)
-            val user = transaction.get(userRef).toObject(User::class.java)
-                ?: throw IllegalStateException("User not found")
-            userName = user.displayName
-
-            val activityDocId = "${userId}_$date"
-            val activityDocRef = activitiesCollection.document(activityDocId)
-            val activitySnapshot = transaction.get(activityDocRef)
-
-            if (activitySnapshot.exists()) {
-                val updates = mutableMapOf<String, Any>(
-                    "steps" to FieldValue.increment(steps),
-                    "distance" to FieldValue.increment(distance),
-                    "calories" to FieldValue.increment(calories),
-                    "altitude" to FieldValue.increment(altitude),
-                    "updatedAt" to Timestamp.now()
-                )
-                if (routes.isNotEmpty()) {
-                    updates["routes"] = FieldValue.arrayUnion(*routes.toTypedArray())
-                }
-                transaction.update(activityDocRef, updates)
-                totalDistance = (activitySnapshot.getDouble("distance") ?: 0.0) + distance
-            } else {
-                val newActivity = DailyActivity(
-                    activityDocId, userId, date, steps, distance, calories,
-                    altitude = altitude, routes = routes
-                )
-                transaction.set(activityDocRef, newActivity)
-                totalDistance = distance
-            }
-        }.await()
-
-        // 랭킹 업데이트를 큐에 추가 (서버에서 처리하므로 주석 처리)
-        // queueRankingUpdate(userId, userName, totalDistance, date)
-
-        Result.success(Unit)
-    } catch (e: Exception) {
-        Log.e(TAG, "incrementDailyActivity 실패", e)
-        Result.failure(e)
-    }
-
-    /* 서버에서 랭킹을 집계하므로 클라이언트의 업데이트 로직은 주석 처리합니다.
-    private fun queueRankingUpdate(userId: String, displayName: String, distance: Double, date: String) {
-        try {
-            val calendar = Calendar.getInstance().apply {
-                time = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(date)!!
-            }
-
-            val periods = listOf(
-                "daily" to date,
-                "monthly" to String.format(
-                    "%04d-%02d",
-                    calendar.get(Calendar.YEAR),
-                    calendar.get(Calendar.MONTH) + 1
-                ),
-                "yearly" to calendar.get(Calendar.YEAR).toString()
-            )
-
-            periods.forEach { (period, periodKey) ->
-                val key = "${period}_${periodKey}_${userId}"
-                pendingRankingUpdates[key] = RankingUpdate(
-                    userId = userId,
-                    displayName = displayName,
-                    distance = distance,
-                    period = period,
-                    periodKey = periodKey
-                )
-            }
-
-            Log.d(TAG, "랭킹 업데이트 큐에 추가: ${pendingRankingUpdates.size}개")
-        } catch (e: Exception) {
-            Log.e(TAG, "랭킹 큐 추가 실패", e)
-        }
-    }
-
-    suspend fun flushRankingUpdates(): Result<Unit> {
-        if (pendingRankingUpdates.isEmpty()) {
-            return Result.success(Unit)
-        }
-
+    ): Result<Unit> {
         return try {
-            firestore.runBatch { batch ->
-                pendingRankingUpdates.forEach { (key, update) ->
-                    val docRef = rankingsCollection.document(key)
-                    batch.set(docRef, mapOf(
-                        "userId" to update.userId,
-                        "displayName" to update.displayName,
-                        "distance" to update.distance,
-                        "period" to update.period,
-                        "periodKey" to update.periodKey,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    ), SetOptions.merge())
-                }
-            }.await()
-
-            Log.d(TAG, "랭킹 배치 업데이트 완료: ${pendingRankingUpdates.size}개")
-            pendingRankingUpdates.clear()
+            dailyActivityDao.incrementActivity(
+                userId = userId,
+                date = date,
+                stepsIncrement = steps,
+                distanceIncrement = distance,
+                caloriesIncrement = calories,
+                altitudeIncrement = altitude,
+                newRoutes = routes
+            )
+            Log.d(TAG, "Room 저장 성공: steps=$steps, distance=$distance")
             Result.success(Unit)
         } catch (e: Exception) {
-            Log.e(TAG, "랭킹 배치 업데이트 실패", e)
+            Log.e(TAG, "Room 저장 실패", e)
             Result.failure(e)
         }
     }
-    */
 
-    fun getDailyActivity(userId: String, date: String): Flow<DailyActivity?> {
-        return callbackFlow {
-            val docId = "${userId}_$date"
-            val listener = activitiesCollection.document(docId).addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    close(error)
-                    return@addSnapshotListener
-                }
-                trySend(snapshot?.toObject(DailyActivity::class.java))
+    /**
+     * 미동기화된 데이터를 Firestore로 동기화
+     */
+    suspend fun syncUnsyncedActivities(): Result<Unit> {
+        return try {
+            val unsyncedList = dailyActivityDao.getUnsyncedActivities()
+            if (unsyncedList.isEmpty()) {
+                Log.d(TAG, "동기화할 데이터 없음")
+                return Result.success(Unit)
             }
-            awaitClose { listener.remove() }
+
+            Log.d(TAG, "Firestore 동기화 시작: ${unsyncedList.size}개 항목")
+
+            for (localActivity in unsyncedList) {
+                try {
+                    // Firestore에 업데이트
+                    val docId = localActivity.id
+                    val routes: List<RoutePoint> = gson.fromJson(
+                        localActivity.routes,
+                        object : TypeToken<List<RoutePoint>>() {}.type
+                    )
+
+                    val activityDocRef = activitiesCollection.document(docId)
+                    val activitySnapshot = activityDocRef.get().await()
+
+                    if (activitySnapshot.exists()) {
+                        // 기존 문서 업데이트
+                        activityDocRef.update(
+                            mapOf(
+                                "steps" to FieldValue.increment(localActivity.steps),
+                                "distance" to FieldValue.increment(localActivity.distance),
+                                "calories" to FieldValue.increment(localActivity.calories),
+                                "altitude" to FieldValue.increment(localActivity.altitude),
+                                "routes" to FieldValue.arrayUnion(*routes.toTypedArray()),
+                                "updatedAt" to Timestamp.now()
+                            )
+                        ).await()
+                    } else {
+                        // 새 문서 생성
+                        val newActivity = DailyActivity(
+                            id = docId,
+                            userId = localActivity.userId,
+                            date = localActivity.date,
+                            steps = localActivity.steps,
+                            distance = localActivity.distance,
+                            calories = localActivity.calories,
+                            altitude = localActivity.altitude,
+                            routes = routes,
+                            updatedAt = Timestamp.now()
+                        )
+                        activityDocRef.set(newActivity).await()
+                    }
+
+                    // 동기화 완료 표시
+                    dailyActivityDao.markAsSynced(localActivity.id)
+                    Log.d(TAG, "Firestore 동기화 완료: ${localActivity.id}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "개별 항목 동기화 실패: ${localActivity.id}", e)
+                    // 계속 진행
+                }
+            }
+
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "Firestore 동기화 실패", e)
+            Result.failure(e)
         }
     }
 
+    /**
+     * 로컬 Room에서 특정 날짜 데이터 조회
+     */
+    suspend fun getDailyActivityLocal(userId: String, date: String): DailyActivity? {
+        return try {
+            val local = dailyActivityDao.getActivityByUserAndDate(userId, date)
+            local?.toDailyActivity()
+        } catch (e: Exception) {
+            Log.e(TAG, "로컬 데이터 조회 실패", e)
+            null
+        }
+    }
+
+    /**
+     * Firestore에서 데이터 직접 조회 (UI 초기화용)
+     */
     suspend fun getDailyActivityOnce(userId: String, date: String, onComplete: (DailyActivity?) -> Unit) {
         val docId = "${userId}_$date"
         activitiesCollection.document(docId).get()
@@ -318,6 +285,14 @@ class FirebaseRepository {
                 }
             awaitClose { listener.remove() }
         }
+    }
+
+    /**
+     * Room 데이터를 Flow로 제공 (실시간 업데이트용)
+     */
+    fun getDailyActivityFlow(userId: String, date: String): Flow<DailyActivity?> {
+        return dailyActivityDao.getActivitiesFlow(userId, 30)
+            .map { list -> list.find { it.date == date }?.toDailyActivity() }
     }
 
     // --- Rankings --- //
@@ -370,5 +345,26 @@ class FirebaseRepository {
         } catch (e: Exception) {
             null
         }
+    }
+
+    // --- Extension Functions --- //
+
+    private fun LocalDailyActivityEntity.toDailyActivity(): DailyActivity {
+        val routes: List<RoutePoint> = gson.fromJson(
+            this.routes,
+            object : TypeToken<List<RoutePoint>>() {}.type
+        )
+        return DailyActivity(
+            id = this.id,
+            userId = this.userId,
+            date = this.date,
+            steps = this.steps,
+            distance = this.distance,
+            calories = this.calories,
+            altitude = this.altitude,
+            activeMinutes = this.activeMinutes,
+            routes = routes,
+            updatedAt = Timestamp(this.lastModified / 1000, 0)
+        )
     }
 }

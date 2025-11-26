@@ -47,7 +47,7 @@ enum class RankingPeriod {
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repository = FirebaseRepository()
+    private val repository = FirebaseRepository(application.applicationContext) // ✅ Context 전달
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
     private val prefs = application.getSharedPreferences("WalkTrackerPrefs", Context.MODE_PRIVATE)
 
@@ -57,7 +57,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _rankingState = MutableStateFlow(RankingUiState())
     val rankingState: StateFlow<RankingUiState> = _rankingState.asStateFlow()
 
-    // 현재 로그인된 사용자 ID 추적
     private var currentUserId: String? = null
 
     private val CACHE_DURATION_MS = 5 * 60 * 1000
@@ -65,7 +64,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val activityUpdateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == LocationTrackingService.ACTION_ACTIVITY_UPDATE) {
-                // 현재 사용자 ID 확인
                 val serviceUserId = repository.getCurrentUserId()
                 if (serviceUserId != currentUserId) {
                     Log.w("MainViewModel", "User mismatch detected. Ignoring broadcast.")
@@ -168,7 +166,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(isLoading = true) }
             val user = repository.getCurrentUser()
 
-            // 사용자가 변경되었는지 확인
             val newUserId = user?.userId
             if (newUserId != currentUserId) {
                 Log.d("MainViewModel", "User changed from $currentUserId to $newUserId. Clearing data.")
@@ -195,9 +192,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val userId = repository.getCurrentUserId() ?: return@launch
             val today = dateFormat.format(Date())
 
-            repository.getDailyActivityOnce(userId, today) { activity ->
-                if (activity != null) {
-                    _uiState.update { it.copy(todayActivity = activity) }
+            // 먼저 로컬 Room에서 조회
+            val localActivity = repository.getDailyActivityLocal(userId, today)
+            if (localActivity != null) {
+                _uiState.update { it.copy(todayActivity = localActivity) }
+                Log.d("MainViewModel", "로컬 데이터 로드 성공")
+            } else {
+                // 로컬에 없으면 Firestore에서 조회
+                repository.getDailyActivityOnce(userId, today) { activity ->
+                    if (activity != null) {
+                        _uiState.update { it.copy(todayActivity = activity) }
+                        Log.d("MainViewModel", "Firestore 데이터 로드 성공")
+                    }
                 }
             }
         }
@@ -239,7 +245,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 altitude = 0.0
             )
 
-            repository.updateDailyActivity(userId, today, resetActivity)
+            // Firestore가 아닌 Room에 저장 (동기화는 서비스에서 자동 처리)
+            repository.incrementDailyActivityLocal(
+                userId = userId,
+                date = today,
+                steps = 0,
+                distance = 0.0,
+                calories = 0.0,
+                altitude = 0.0,
+                routes = emptyList()
+            )
 
             _uiState.update { it.copy(todayActivity = resetActivity, currentSpeed = 0f) }
 
@@ -335,9 +350,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         LocalBroadcastManager.getInstance(getApplication()).sendBroadcast(intent)
     }
 
-    /**
-     * 모든 로컬 데이터를 초기화합니다.
-     */
     private fun clearAllData() {
         _uiState.update {
             MainUiState(

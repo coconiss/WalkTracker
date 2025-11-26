@@ -1,7 +1,8 @@
 package com.walktracker.app.viewmodel
 
+import android.app.Application
 import android.util.Log
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldPath
@@ -33,16 +34,15 @@ data class ActivityDetailsUiState(
     val chartType: ChartType = ChartType.BAR
 )
 
-// Firestore의 'daily_activities' 문서 구조에 맞는 데이터 클래스
 data class FirestoreDailyActivity(
     val steps: Long = 0L,
     val distance: Double = 0.0,
     val calories: Double = 0.0,
-    val date: String = "", // 문서 내의 date 필드
-    val routes: List<RoutePoint> = emptyList() // 경로 데이터 추가
+    val date: String = "",
+    val routes: List<RoutePoint> = emptyList()
 )
 
-class ActivityDetailsViewModel : ViewModel() {
+class ActivityDetailsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(ActivityDetailsUiState())
     val uiState: StateFlow<ActivityDetailsUiState> = _uiState.asStateFlow()
@@ -91,9 +91,7 @@ class ActivityDetailsViewModel : ViewModel() {
                 val startDateString = dateFormat.format(Date(_uiState.value.startDate))
                 val endDateString = dateFormat.format(Date(_uiState.value.endDate))
 
-                // 문서 ID를 기준으로 범위 쿼리를 생성합니다. (예: "USERID_2023-10-20")
                 val startDocId = "${currentUser.uid}_$startDateString"
-                // endAt은 endDocId를 포함하므로, 그대로 사용합니다.
                 val endDocId = "${currentUser.uid}_$endDateString"
 
                 Log.d(TAG, "Querying 'daily_activities' for doc IDs from $startDocId to $endDocId")
@@ -108,7 +106,6 @@ class ActivityDetailsViewModel : ViewModel() {
                 Log.d(TAG, "Firestore query returned ${querySnapshot.size()} documents.")
 
                 val activityList = querySnapshot.documents.mapNotNull { doc ->
-                    // 문서 ID가 현재 사용자 ID로 시작하는지 다시 한번 확인 (다른 사용자의 데이터가 섞여 들어오는 것을 방지하기 위한 안전장치)
                     if (!doc.id.startsWith(currentUser.uid)) return@mapNotNull null
 
                     val firestoreData = doc.toObject(FirestoreDailyActivity::class.java)
@@ -116,14 +113,12 @@ class ActivityDetailsViewModel : ViewModel() {
                         Log.w(TAG, "Failed to parse document: ${doc.id}")
                         null
                     } else {
-                        // 평균 속도 계산
                         val avgSpeed = if (firestoreData.routes.isNotEmpty()) {
                             firestoreData.routes.map { it.speed }.average()
                         } else {
                             0.0
                         }
 
-                        // 문서 내부의 date(String)를 UI에서 사용할 Date 객체로 변환
                         val date = dateFormat.parse(firestoreData.date)
                         date?.let {
                             ActivityDetailData(
@@ -131,11 +126,11 @@ class ActivityDetailsViewModel : ViewModel() {
                                 steps = firestoreData.steps,
                                 distance = firestoreData.distance,
                                 calories = firestoreData.calories,
-                                avgSpeed = avgSpeed // 평균 속도 추가
+                                avgSpeed = avgSpeed
                             )
                         }
                     }
-                }.sortedByDescending { it.date } // 최신 날짜가 위로 오도록 정렬
+                }.sortedByDescending { it.date }
 
                 Log.d(TAG, "Parsed ${activityList.size} activity items.")
                 _uiState.update { it.copy(isLoading = false, activityData = activityList) }

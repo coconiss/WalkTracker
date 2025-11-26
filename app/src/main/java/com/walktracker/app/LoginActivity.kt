@@ -37,12 +37,13 @@ import kotlinx.coroutines.withContext
 class LoginActivity : ComponentActivity() {
 
     private lateinit var auth: FirebaseAuth
-    private val repository = FirebaseRepository()
+    private lateinit var repository: FirebaseRepository // lazy 대신 lateinit 사용
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         auth = FirebaseAuth.getInstance()
+        repository = FirebaseRepository(applicationContext) // Context 전달
 
         // 이미 로그인되어 있으면 메인으로
         if (auth.currentUser != null) {

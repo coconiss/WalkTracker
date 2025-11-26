@@ -8,7 +8,6 @@ class AltitudeCalculator {
 
     companion object {
         private const val PRESSURE_TO_ALTITUDE_RATIO = 8.3
-        private const val MIN_PRESSURE_CHANGE = 1.0f
         private const val MIN_ALTITUDE_CHANGE = 3.0
         private const val PRESSURE_FILTER_SIZE = 5
         private const val MAX_ALTITUDE_CHANGE_PER_SECOND = 3.0
@@ -22,7 +21,8 @@ class AltitudeCalculator {
     fun calculateAltitudeGain(
         currentPressure: Float,
         currentTime: Long,
-        isMoving: Boolean
+        isMoving: Boolean,
+        pressureChangeThreshold: Float
     ): Double {
         if (!isMoving) {
             return 0.0
@@ -56,7 +56,7 @@ class AltitudeCalculator {
         val previousPressure = pressureHistory.first()
         val pressureChange = abs(filteredPressure - previousPressure)
 
-        if (pressureChange < MIN_PRESSURE_CHANGE) {
+        if (pressureChange < pressureChangeThreshold) {
             return 0.0
         }
 

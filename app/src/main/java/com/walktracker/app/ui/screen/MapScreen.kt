@@ -62,7 +62,7 @@ fun MapScreen(
     onLocationRequest: () -> Unit
 ) {
     val context = LocalContext.current
-    val repository = remember { FirebaseRepository() }
+    val repository = remember { FirebaseRepository(context) } // Context 전달
     val scope = rememberCoroutineScope()
 
     var mapView by remember { mutableStateOf<MapView?>(null) }

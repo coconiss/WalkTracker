@@ -1,16 +1,16 @@
-
 package com.walktracker.app.viewmodel
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.walktracker.app.repository.FirebaseRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-class AuthViewModel : ViewModel() {
+class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repository = FirebaseRepository()
+    private val repository = FirebaseRepository(application.applicationContext)
 
     private val _loginState = MutableStateFlow<LoginState>(LoginState.Idle)
     val loginState: StateFlow<LoginState> = _loginState

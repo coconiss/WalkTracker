@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("com.google.gms.google-services")
     id("kotlin-parcelize")
+    id("com.google.devtools.ksp") version "1.9.20-1.0.14"
 }
 
 android {
@@ -49,7 +50,23 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // 중복 파일 제외 추가
+            excludes += "META-INF/DEPENDENCIES"
+            excludes += "META-INF/LICENSE"
+            excludes += "META-INF/LICENSE.txt"
+            excludes += "META-INF/license.txt"
+            excludes += "META-INF/NOTICE"
+            excludes += "META-INF/NOTICE.txt"
+            excludes += "META-INF/notice.txt"
+            excludes += "META-INF/ASL2.0"
         }
+    }
+}
+
+// 중복 의존성 해결을 위한 설정 추가
+configurations.all {
+    resolutionStrategy {
+        force("org.jetbrains:annotations:23.0.0")
     }
 }
 
@@ -100,6 +117,14 @@ dependencies {
     // WorkManager (백그라운드 작업)
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
+    // Room Database
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
+
+    // Gson for JSON parsing
+    implementation("com.google.code.gson:gson:2.10.1")
+
     // Testing
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
@@ -108,4 +133,8 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+kotlin {
+    jvmToolchain(17)
 }
