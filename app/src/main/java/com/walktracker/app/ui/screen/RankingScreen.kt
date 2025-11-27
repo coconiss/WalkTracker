@@ -3,7 +3,7 @@ package com.walktracker.app.ui.screen
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.walktracker.app.model.RankingEntry
 import com.walktracker.app.viewmodel.RankingPeriod
@@ -23,7 +24,8 @@ import com.walktracker.app.viewmodel.RankingUiState
 @Composable
 fun RankingScreen(
     rankingState: RankingUiState,
-    onPeriodChange: (RankingPeriod) -> Unit
+    onPeriodChange: (RankingPeriod) -> Unit,
+    currentUserId: String? // 현재 사용자 ID를 전달받음
 ) {
     Column(
         modifier = Modifier
@@ -37,14 +39,14 @@ fun RankingScreen(
         )
 
         // 내 순위 카드
-        MyRankCard(rank = rankingState.userRank)
+        MyRankCard(myRank = rankingState.myRank, totalParticipants = rankingState.totalParticipants)
 
         Text(
             text = "매일 0시~1시 갱신",
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
-            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            textAlign = TextAlign.End,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
         )
@@ -59,12 +61,13 @@ fun RankingScreen(
             }
         } else if (rankingState.error != null) {
             Box(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(32.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(32.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.ErrorOutline,
@@ -74,15 +77,15 @@ fun RankingScreen(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = rankingState.error!!,
+                        text = rankingState.error,
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.error,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        textAlign = TextAlign.Center
                     )
                 }
             }
         } else {
-            RankingList(rankings = rankingState.rankings)
+            RankingList(rankings = rankingState.leaderboard, currentUserId = currentUserId)
         }
     }
 }
@@ -116,7 +119,7 @@ private fun PeriodTabs(
 }
 
 @Composable
-private fun MyRankCard(rank: Int?) {
+private fun MyRankCard(myRank: RankingEntry?, totalParticipants: Int) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -152,12 +155,21 @@ private fun MyRankCard(rank: Int?) {
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                     )
-                    Text(
-                        text = if (rank != null) "${rank}위" else "내 순위 없음",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
+                    if (myRank != null) {
+                        Text(
+                            text = "${myRank.rank}위 / ${totalParticipants}명",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    } else {
+                        Text(
+                            text = "순위권 밖",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
                 }
             }
 
@@ -172,7 +184,7 @@ private fun MyRankCard(rank: Int?) {
 }
 
 @Composable
-private fun RankingList(rankings: List<RankingEntry>) {
+private fun RankingList(rankings: List<RankingEntry>, currentUserId: String?) {
     if (rankings.isEmpty()) {
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -200,15 +212,13 @@ private fun RankingList(rankings: List<RankingEntry>) {
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            itemsIndexed(rankings) { index, entry ->
+            items(rankings, key = { it.userId }) { entry ->
+                val isMyRank = entry.userId == currentUserId
                 RankingItem(
-                    ranking = entry,
-                    rank = index + 1
+                    entry = entry,
+                    isMyRank = isMyRank
                 )
-
-                if (index < rankings.size - 1) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
+                Spacer(modifier = Modifier.height(8.dp))
             }
         }
     }
@@ -216,9 +226,10 @@ private fun RankingList(rankings: List<RankingEntry>) {
 
 @Composable
 private fun RankingItem(
-    ranking: RankingEntry,
-    rank: Int
+    entry: RankingEntry,
+    isMyRank: Boolean
 ) {
+    val rank = entry.rank
     val medalColor = when (rank) {
         1 -> Color(0xFFFFD700) // 금
         2 -> Color(0xFFC0C0C0) // 은
@@ -226,16 +237,18 @@ private fun RankingItem(
         else -> null
     }
 
+    val backgroundColor = when {
+        isMyRank -> MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+        rank <= 3 -> medalColor?.copy(alpha = 0.1f) ?: MaterialTheme.colorScheme.surfaceVariant
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (rank <= 3) {
-                medalColor?.copy(alpha = 0.1f) ?: MaterialTheme.colorScheme.surface
-            } else {
-                MaterialTheme.colorScheme.surface
-            }
-        )
+            containerColor = backgroundColor
+        ),
     ) {
         Row(
             modifier = Modifier
@@ -246,7 +259,7 @@ private fun RankingItem(
             // 순위 배지
             Box(
                 modifier = Modifier
-                    .size(48.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
                     .background(
                         if (rank <= 3) {
@@ -257,21 +270,20 @@ private fun RankingItem(
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                if (rank <= 3) {
+                if (rank <= 3 && medalColor != null) {
                     Icon(
                         imageVector = Icons.Default.EmojiEvents,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(28.dp)
-                    )
-                } else {
-                    Text(
-                        text = rank.toString(),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        contentDescription = "Medal",
+                        tint = medalColor.copy(alpha = 0.9f),
+                        modifier = Modifier.size(32.dp)
                     )
                 }
+                Text(
+                    text = rank.toString(),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (rank <= 3) Color.Black.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onPrimaryContainer
+                )
             }
 
             Spacer(modifier = Modifier.width(16.dp))
@@ -281,12 +293,12 @@ private fun RankingItem(
                 modifier = Modifier.weight(1f)
             ) {
                 Text(
-                    text = ranking.displayName,
+                    text = entry.displayName,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = if (isMyRank) FontWeight.Bold else FontWeight.SemiBold
                 )
                 Text(
-                    text = String.format("%.2f km", ranking.distance),
+                    text = String.format("%.2f km", entry.distance),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )

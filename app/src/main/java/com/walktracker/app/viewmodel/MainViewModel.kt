@@ -13,6 +13,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.walktracker.app.model.DailyActivity
 import com.walktracker.app.model.RankingEntry
+import com.walktracker.app.model.RankingLeaderboard
 import com.walktracker.app.model.User
 import com.walktracker.app.repository.FirebaseRepository
 import com.walktracker.app.service.LocationTrackingService
@@ -33,8 +34,9 @@ data class MainUiState(
 )
 
 data class RankingUiState(
-    val rankings: List<RankingEntry> = emptyList(),
-    val userRank: Int? = null,
+    val leaderboard: List<RankingEntry> = emptyList(),
+    val myRank: RankingEntry? = null, // 리더보드에 있는 내 순위 정보
+    val totalParticipants: Int = 0,
     val isLoading: Boolean = false,
     val selectedPeriod: RankingPeriod = RankingPeriod.DAILY,
     val error: String? = null,
@@ -47,7 +49,7 @@ enum class RankingPeriod {
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repository = FirebaseRepository(application.applicationContext) // ✅ Context 전달
+    private val repository = FirebaseRepository(application.applicationContext)
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
     private val prefs = application.getSharedPreferences("WalkTrackerPrefs", Context.MODE_PRIVATE)
 
@@ -59,7 +61,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private var currentUserId: String? = null
 
-    private val CACHE_DURATION_MS = 5 * 60 * 1000
+    // 랭킹 캐시 유효 시간: 1시간
+    private val CACHE_DURATION_MS = 60 * 60 * 1000
 
     private val activityUpdateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -280,6 +283,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val isCacheValid = (now - lastUpdated) < CACHE_DURATION_MS
 
             if (isCacheValid && _rankingState.value.selectedPeriod == period) {
+                Log.d("MainViewModel", "Ranking cache is still valid.")
                 return@launch
             }
 
@@ -287,35 +291,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             try {
                 val (periodStr, periodKey) = getPeriodInfo(period)
-                val rankings = repository.getRankings(periodStr, periodKey, 100)
+                val leaderboardDoc = repository.getRankingLeaderboard(periodStr, periodKey)
 
-                val userId = repository.getCurrentUserId()
-                var userRank: Int? = null
-
-                if (userId != null) {
-                    val userInList = rankings.find { it.userId == userId }
-                    userRank = if (userInList != null) {
-                        userInList.rank
-                    } else {
-                        repository.getUserRank(periodStr, periodKey)
+                if (leaderboardDoc != null) {
+                    val myRank = leaderboardDoc.leaderboard.find { it.userId == currentUserId }
+                    _rankingState.update {
+                        it.copy(
+                            leaderboard = leaderboardDoc.leaderboard,
+                            myRank = myRank,
+                            totalParticipants = leaderboardDoc.totalParticipants,
+                            isLoading = false,
+                            error = null,
+                            lastUpdated = leaderboardDoc.updatedAt?.toDate()?.time ?: System.currentTimeMillis()
+                        )
+                    }
+                } else {
+                    _rankingState.update {
+                        it.copy(
+                            leaderboard = emptyList(),
+                            myRank = null,
+                            totalParticipants = 0,
+                            isLoading = false,
+                            error = "랭킹 데이터가 아직 집계되지 않았습니다."
+                        )
                     }
                 }
 
-                _rankingState.update {
-                    it.copy(
-                        rankings = rankings,
-                        userRank = userRank,
-                        isLoading = false,
-                        error = null,
-                        lastUpdated = System.currentTimeMillis()
-                    )
-                }
             } catch (e: Exception) {
                 Log.e("MainViewModel", "Failed to load rankings for $period", e)
                 _rankingState.update {
                     it.copy(
                         isLoading = false,
-                        error = "랭킹 데이터를 불러오는데 실패했습니다: ${e.message}"
+                        error = "랭킹 데이터를 불러오는 데 실패했습니다: ${e.message}"
                     )
                 }
             }
@@ -326,6 +333,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val calendar = Calendar.getInstance()
         return when (period) {
             RankingPeriod.DAILY -> {
+                // 어제 날짜의 랭킹을 요청
                 calendar.add(Calendar.DATE, -1)
                 "daily" to dateFormat.format(calendar.time)
             }
@@ -341,7 +349,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadUserData()
         loadInitialTodayActivity()
         loadWeeklyActivity()
-        _rankingState.update { it.copy(lastUpdated = 0L) }
+        _rankingState.update { it.copy(lastUpdated = 0L) } // 캐시 무효화
         loadRankings(_rankingState.value.selectedPeriod)
     }
 

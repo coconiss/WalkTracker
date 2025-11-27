@@ -309,6 +309,7 @@ fun MainApp(
                 }
                 RankingScreen(
                     rankingState = rankingState,
+                    currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: "", // 이 줄을 추가하세요.
                     onPeriodChange = { period ->
                         viewModel.loadRankings(period)
                     }

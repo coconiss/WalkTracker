@@ -13,6 +13,7 @@ import com.google.gson.reflect.TypeToken
 import com.walktracker.app.data.local.WalkTrackerDatabase
 import com.walktracker.app.data.local.entity.LocalDailyActivityEntity
 import com.walktracker.app.model.*
+import com.walktracker.app.model.RankingLeaderboard
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -78,18 +79,15 @@ class FirebaseRepository(context: Context) {
             // Room 데이터 삭제
             dailyActivityDao.deleteAllForUser(userId)
 
-            // Firestore 데이터 삭제
+            // Firestore 데이터 삭제 (사용자 활동 기록만 삭제)
             val activitiesSnapshot = activitiesCollection.whereEqualTo("userId", userId).get().await()
-            val rankingsSnapshot = rankingsCollection.whereEqualTo("userId", userId).get().await()
 
             firestore.runBatch { batch ->
                 batch.delete(usersCollection.document(userId))
                 for (document in activitiesSnapshot.documents) {
                     batch.delete(document.reference)
                 }
-                for (document in rankingsSnapshot.documents) {
-                    batch.delete(document.reference)
-                }
+                // 개별 랭킹 문서를 삭제하는 로직 제거 (더 이상 사용되지 않음)
             }.await()
 
             auth.currentUser?.delete()?.await()
@@ -295,57 +293,29 @@ class FirebaseRepository(context: Context) {
             .map { list -> list.find { it.date == date }?.toDailyActivity() }
     }
 
-    // --- Rankings --- //
+    // --- Rankings (개선된 구조) --- //
 
-    suspend fun getRankings(period: String, periodKey: String, limit: Int = 100): List<RankingEntry> {
-        Log.d(TAG, "getRankings: period=$period, periodKey=$periodKey")
+    /**
+     * 기간별 랭킹 리더보드 문서를 가져옵니다.
+     * 이 문서는 백엔드 스크립트에 의해 주기적으로 생성됩니다.
+     */
+    suspend fun getRankingLeaderboard(period: String, periodKey: String): RankingLeaderboard? {
+        val docId = "${period}_${periodKey}"
+        Log.d(TAG, "getRankingLeaderboard: docId=$docId")
         return try {
-            val snapshot = rankingsCollection
-                .whereEqualTo("period", period)
-                .whereEqualTo("periodKey", periodKey)
-                .orderBy("distance", Query.Direction.DESCENDING)
-                .limit(limit.toLong())
-                .get()
-                .await()
-
-            val rankings = snapshot.documents
-                .mapIndexedNotNull { index, doc ->
-                    try {
-                        doc.toObject(RankingEntry::class.java)?.apply { rank = index + 1 }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "문서 변환 실패: docId=${doc.id}", e)
-                        null
-                    }
-                }
-
-            Log.d(TAG, "랭킹 목록 크기: ${rankings.size}")
-            rankings
+            val document = rankingsCollection.document(docId).get().await()
+            if (document.exists()) {
+                document.toObject(RankingLeaderboard::class.java)
+            } else {
+                Log.w(TAG, "Ranking document not found: $docId")
+                null
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "getRankings 실패", e)
-            emptyList()
-        }
-    }
-
-    suspend fun getUserRank(period: String, periodKey: String): Int? {
-        val userId = getCurrentUserId() ?: return null
-        return try {
-            val docId = "${period}_${periodKey}_${userId}"
-            val userRanking = rankingsCollection.document(docId).get().await()
-                .toObject(RankingEntry::class.java) ?: return null
-
-            val higherCount = rankingsCollection
-                .whereEqualTo("period", period)
-                .whereEqualTo("periodKey", periodKey)
-                .whereGreaterThan("distance", userRanking.distance)
-                .get()
-                .await()
-                .size()
-
-            higherCount + 1
-        } catch (e: Exception) {
+            Log.e(TAG, "getRankingLeaderboard failed for $docId", e)
             null
         }
     }
+
 
     // --- Extension Functions --- //
 

@@ -124,7 +124,7 @@ class LocationTrackingService : Service(), SensorEventListener {
         private const val MAX_WALKING_SPEED_MPS = 2.2f  // 8km/h - 빠른 걷기 최고 속도
         private const val MIN_WALKING_SPEED_MPS = 0.5f  // 2.9km/h - 최소 걷기 속도
         private const val MAX_TIME_DIFFERENCE_SECONDS = 60L
-        private const val MIN_ACCURACY_METERS = 100f
+        private const val MIN_ACCURACY_METERS = 50f
 
         // 속도 타임아웃: 이 시간 동안 이동이 없으면 속도를 0으로 리셋
         private const val SPEED_TIMEOUT_MS = 10000L  // 10초
@@ -969,7 +969,7 @@ class LocationTrackingService : Service(), SensorEventListener {
 
         val (priority, interval) = when (currentActivityType) {
             ActivityType.RUNNING -> Priority.PRIORITY_HIGH_ACCURACY to LOCATION_INTERVAL_RUNNING
-            ActivityType.WALKING -> Priority.PRIORITY_BALANCED_POWER_ACCURACY to LOCATION_INTERVAL_WALKING
+            ActivityType.WALKING -> Priority.PRIORITY_HIGH_ACCURACY to LOCATION_INTERVAL_WALKING
             ActivityType.STILL -> Priority.PRIORITY_BALANCED_POWER_ACCURACY to LOCATION_INTERVAL_STILL
             else -> Priority.PRIORITY_BALANCED_POWER_ACCURACY to LOCATION_INTERVAL_WALKING
         }

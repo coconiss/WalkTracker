@@ -119,24 +119,19 @@ def main():
     kst = pytz.timezone('Asia/Seoul')
     now_kst = datetime.datetime.now(kst)
 
-    # --- 실시간 집계 (현재 기준) ---
-    # 1. 오늘의 일간 랭킹
-    today_key = now_kst.strftime("%Y-%m-%d")
-    aggregate_and_update_ranking("daily", today_key)
+    # Github Action은 KST 00시에 실행되므로, 어제 날짜를 기준으로 집계합니다.
 
-    # 2. 이번 달의 월간 랭킹
+    # 1. 어제의 일간 랭킹 집계
+    yesterday_key = (now_kst - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    aggregate_and_update_ranking("daily", yesterday_key)
+
+    # 2. 이번 달의 월간 랭킹 집계 (오늘 날짜 포함)
     monthly_key = now_kst.strftime("%Y-%m")
     aggregate_and_update_ranking("monthly", monthly_key)
 
-    # 3. 올해의 연간 랭킹
+    # 3. 올해의 연간 랭킹 집계 (오늘 날짜 포함)
     yearly_key = str(now_kst.year)
     aggregate_and_update_ranking("yearly", yearly_key)
-
-    # --- 최종 집계 (어제 기준) ---
-    # Github Action이 하루 한 번 00시 직후에 실행될 때,
-    # 어제 날짜의 최종본을 한 번 더 확실하게 업데이트합니다.
-    yesterday_key = (now_kst - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-    aggregate_and_update_ranking("daily", yesterday_key)
 
 
 if __name__ == "__main__":
