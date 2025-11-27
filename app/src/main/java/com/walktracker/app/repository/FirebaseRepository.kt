@@ -6,8 +6,8 @@ import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.Query
-import com.google.firebase.firestore.SetOptions
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.walktracker.app.data.local.WalkTrackerDatabase
@@ -30,6 +30,7 @@ class FirebaseRepository(context: Context) {
     private val gson = Gson()
 
     private val usersCollection = firestore.collection("users")
+    private val usernamesCollection = firestore.collection("usernames") // 닉네임 컬렉션 추가
     private val activitiesCollection = firestore.collection("daily_activities")
     private val rankingsCollection = firestore.collection("rankings")
 
@@ -46,16 +47,27 @@ class FirebaseRepository(context: Context) {
             val authResult = auth.createUserWithEmailAndPassword(email, password).await()
             val firebaseUser = authResult.user ?: throw IllegalStateException("FirebaseUser is null")
 
+            val displayName = email.substringBefore('@')
+
             val newUser = User(
                 userId = firebaseUser.uid,
                 email = email,
-                displayName = email.substringBefore('@'),
+                displayName = displayName,
                 weight = weight,
                 createdAt = Timestamp.now()
             )
-            saveUser(newUser).getOrThrow()
+
+            // Batch Write로 사용자 생성과 닉네임 생성을 원자적으로 처리
+            firestore.runBatch { batch ->
+                batch.set(usersCollection.document(firebaseUser.uid), newUser)
+                batch.set(usernamesCollection.document(displayName), mapOf("userId" to firebaseUser.uid))
+            }.await()
+
             Result.success(Unit)
         } catch (e: Exception) {
+            // 회원가입 실패 시 생성된 Firebase Auth 계정 롤백
+            auth.currentUser?.delete()?.await()
+            Log.e(TAG, "signUpWithEmailPassword failed, rolled back auth user.", e)
             Result.failure(e)
         }
     }
@@ -76,20 +88,32 @@ class FirebaseRepository(context: Context) {
     suspend fun deleteAccount(): Result<Unit> {
         val userId = getCurrentUserId() ?: return Result.failure(Exception("User not signed in"))
         return try {
+            // 문서를 삭제하기 전에 현재 닉네임을 먼저 가져옵니다.
+            val user = getCurrentUser()
+            val displayName = user?.displayName
+
             // Room 데이터 삭제
             dailyActivityDao.deleteAllForUser(userId)
 
-            // Firestore 데이터 삭제 (사용자 활동 기록만 삭제)
+            // Firestore 데이터 삭제 (사용자, 닉네임, 활동 기록)
             val activitiesSnapshot = activitiesCollection.whereEqualTo("userId", userId).get().await()
 
             firestore.runBatch { batch ->
+                // 사용자 문서 삭제
                 batch.delete(usersCollection.document(userId))
+
+                // 닉네임 문서 삭제
+                if (displayName != null) {
+                    batch.delete(usernamesCollection.document(displayName))
+                }
+
+                // 모든 활동 기록 문서 삭제
                 for (document in activitiesSnapshot.documents) {
                     batch.delete(document.reference)
                 }
-                // 개별 랭킹 문서를 삭제하는 로직 제거 (더 이상 사용되지 않음)
             }.await()
 
+            // 마지막으로 Auth 계정 삭제
             auth.currentUser?.delete()?.await()
             Result.success(Unit)
         } catch (e: Exception) {
@@ -127,11 +151,70 @@ class FirebaseRepository(context: Context) {
         }
     }
 
+    suspend fun isDisplayNameAvailable(displayName: String): Boolean {
+        Log.d(TAG, "Checking if displayName is available in 'usernames' collection: $displayName")
+        return try {
+            val doc = usernamesCollection.document(displayName).get().await()
+            val isAvailable = !doc.exists()
+            Log.d(TAG, "Display name '$displayName' is available: $isAvailable")
+            isAvailable
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking display name availability", e)
+            false // 오류 발생 시 안전하게 '사용 불가'로 처리
+        }
+    }
+
+    suspend fun updateUserDisplayName(userId: String, newDisplayName: String): Result<Unit> {
+        Log.d(TAG, "Attempting to update displayName for user $userId to $newDisplayName using a transaction.")
+        return try {
+            firestore.runTransaction { transaction ->
+                val userDocRef = usersCollection.document(userId)
+                val newUsernameDocRef = usernamesCollection.document(newDisplayName)
+
+                // 1. 현재 사용자 문서에서 이전 닉네임 가져오기
+                val userSnapshot = transaction.get(userDocRef)
+                val oldDisplayName = userSnapshot.getString("displayName")
+                    ?: throw FirebaseFirestoreException("User has no display name", FirebaseFirestoreException.Code.ABORTED)
+
+                // 닉네임이 변경되지 않았다면 아무것도 하지 않음
+                if (oldDisplayName == newDisplayName) {
+                    return@runTransaction null
+                }
+
+                // 2. 새로운 닉네임이 이미 사용 중인지 확인 (트랜잭션 내에서)
+                val newUsernameSnapshot = transaction.get(newUsernameDocRef)
+                if (newUsernameSnapshot.exists()) {
+                    throw FirebaseFirestoreException("Display name '$newDisplayName' is already taken.", FirebaseFirestoreException.Code.ALREADY_EXISTS)
+                }
+
+                // [수정] 이전 닉네임 문서 참조 및 존재 확인
+                val oldUsernameDocRef = usernamesCollection.document(oldDisplayName)
+                val oldUsernameSnapshot = transaction.get(oldUsernameDocRef)
+
+                // 3. 사용자 문서의 닉네임 업데이트
+                transaction.update(userDocRef, "displayName", newDisplayName)
+
+                // 4. 이전 닉네임 문서가 존재할 경우에만 삭제
+                if (oldUsernameSnapshot.exists()) {
+                    transaction.delete(oldUsernameDocRef)
+                }
+
+                // 5. 새로운 닉네임 문서 생성
+                transaction.set(newUsernameDocRef, mapOf("userId" to userId))
+
+                null // 트랜잭션 성공 시 null 반환
+            }.await()
+
+            Log.d(TAG, "Successfully updated displayName for user $userId to $newDisplayName")
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to update displayName for user $userId", e)
+            Result.failure(e)
+        }
+    }
+
     // --- Activity Data (Room 중심) --- //
 
-    /**
-     * Room에 데이터 증분 저장 (로컬 우선)
-     */
     suspend fun incrementDailyActivityLocal(
         userId: String,
         date: String,
@@ -159,9 +242,6 @@ class FirebaseRepository(context: Context) {
         }
     }
 
-    /**
-     * 미동기화된 데이터를 Firestore로 동기화
-     */
     suspend fun syncUnsyncedActivities(): Result<Unit> {
         return try {
             val unsyncedList = dailyActivityDao.getUnsyncedActivities()
@@ -174,7 +254,6 @@ class FirebaseRepository(context: Context) {
 
             for (localActivity in unsyncedList) {
                 try {
-                    // Firestore에 업데이트
                     val docId = localActivity.id
                     val routes: List<RoutePoint> = gson.fromJson(
                         localActivity.routes,
@@ -185,7 +264,6 @@ class FirebaseRepository(context: Context) {
                     val activitySnapshot = activityDocRef.get().await()
 
                     if (activitySnapshot.exists()) {
-                        // 기존 문서 업데이트
                         activityDocRef.update(
                             mapOf(
                                 "steps" to FieldValue.increment(localActivity.steps),
@@ -197,7 +275,6 @@ class FirebaseRepository(context: Context) {
                             )
                         ).await()
                     } else {
-                        // 새 문서 생성
                         val newActivity = DailyActivity(
                             id = docId,
                             userId = localActivity.userId,
@@ -212,12 +289,10 @@ class FirebaseRepository(context: Context) {
                         activityDocRef.set(newActivity).await()
                     }
 
-                    // 동기화 완료 표시
                     dailyActivityDao.markAsSynced(localActivity.id)
                     Log.d(TAG, "Firestore 동기화 완료: ${localActivity.id}")
                 } catch (e: Exception) {
                     Log.e(TAG, "개별 항목 동기화 실패: ${localActivity.id}", e)
-                    // 계속 진행
                 }
             }
 
@@ -228,9 +303,6 @@ class FirebaseRepository(context: Context) {
         }
     }
 
-    /**
-     * 로컬 Room에서 특정 날짜 데이터 조회
-     */
     suspend fun getDailyActivityLocal(userId: String, date: String): DailyActivity? {
         return try {
             val local = dailyActivityDao.getActivityByUserAndDate(userId, date)
@@ -241,9 +313,6 @@ class FirebaseRepository(context: Context) {
         }
     }
 
-    /**
-     * Firestore에서 데이터 직접 조회 (UI 초기화용)
-     */
     suspend fun getDailyActivityOnce(userId: String, date: String, onComplete: (DailyActivity?) -> Unit) {
         val docId = "${userId}_$date"
         activitiesCollection.document(docId).get()
@@ -285,9 +354,6 @@ class FirebaseRepository(context: Context) {
         }
     }
 
-    /**
-     * Room 데이터를 Flow로 제공 (실시간 업데이트용)
-     */
     fun getDailyActivityFlow(userId: String, date: String): Flow<DailyActivity?> {
         return dailyActivityDao.getActivitiesFlow(userId, 30)
             .map { list -> list.find { it.date == date }?.toDailyActivity() }
@@ -295,10 +361,6 @@ class FirebaseRepository(context: Context) {
 
     // --- Rankings (개선된 구조) --- //
 
-    /**
-     * 기간별 랭킹 리더보드 문서를 가져옵니다.
-     * 이 문서는 백엔드 스크립트에 의해 주기적으로 생성됩니다.
-     */
     suspend fun getRankingLeaderboard(period: String, periodKey: String): RankingLeaderboard? {
         val docId = "${period}_${periodKey}"
         Log.d(TAG, "getRankingLeaderboard: docId=$docId")
@@ -316,14 +378,14 @@ class FirebaseRepository(context: Context) {
         }
     }
 
-
     // --- Extension Functions --- //
 
     private fun LocalDailyActivityEntity.toDailyActivity(): DailyActivity {
-        val routes: List<RoutePoint> = gson.fromJson(
-            this.routes,
-            object : TypeToken<List<RoutePoint>>() {}.type
-        )
+        val routes: List<RoutePoint> = try {
+            gson.fromJson(this.routes, object : TypeToken<List<RoutePoint>>() {}.type) ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
         return DailyActivity(
             id = this.id,
             userId = this.userId,

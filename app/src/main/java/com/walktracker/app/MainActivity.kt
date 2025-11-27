@@ -317,13 +317,16 @@ fun MainApp(
             }
             composable("settings") {
                 SettingsScreen(
-                    user = uiState.user,
+                    uiState = uiState, // uiState 전달
+                    onClearError = { viewModel.clearError() }, // clearError 함수 전달
                     onWeightUpdate = {
                         viewModel.updateUserWeight(it)
                     },
+                    onDisplayNameUpdate = {
+                        viewModel.updateUserDisplayName(it)
+                    },
                     onSignOut = onSignOut,
                     onDeleteAccount = onDeleteAccount,
-                    notificationEnabled = uiState.notificationEnabled,
                     onNotificationChange = {
                         viewModel.setNotificationEnabled(it)
                     },
@@ -382,6 +385,7 @@ fun AdMobBanner() {
         modifier = Modifier.fillMaxWidth().height(50.dp)
     )
 }
+
 
 data class NavigationItem(
     val route: String,

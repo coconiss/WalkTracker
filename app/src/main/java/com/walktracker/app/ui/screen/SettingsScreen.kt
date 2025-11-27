@@ -2,6 +2,7 @@ package com.walktracker.app.ui.screen
 
 import android.content.Context
 import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,21 +22,25 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.walktracker.app.model.User
 import com.walktracker.app.service.LocationTrackingService
 import com.walktracker.app.util.SharedPreferencesManager
+import com.walktracker.app.viewmodel.MainUiState
 
 @Composable
 fun SettingsScreen(
-    user: User?,
+    uiState: MainUiState,
+    onClearError: () -> Unit,
     onWeightUpdate: (Double) -> Unit,
+    onDisplayNameUpdate: (String) -> Unit,
     onSignOut: () -> Unit,
     onDeleteAccount: () -> Unit,
-    notificationEnabled: Boolean,
     onNotificationChange: (Boolean) -> Unit,
     onForceQuit: () -> Unit // 강제 종료 콜백 추가
 ) {
     val context = LocalContext.current
     val prefs = remember { SharedPreferencesManager(context) }
+    val user = uiState.user
 
     var showWeightDialog by remember { mutableStateOf(false) }
+    var showDisplayNameDialog by remember { mutableStateOf(false) }
     var showStrideDialog by remember { mutableStateOf(false) } // 보폭 다이얼로그
     var showPrivacyPolicyDialog by remember { mutableStateOf(false) }
     var showAppInfoDialog by remember { mutableStateOf(false) }
@@ -46,6 +51,14 @@ fun SettingsScreen(
     var gpsEnabled by remember { mutableStateOf(prefs.isGpsEnabled()) }
     var stepSensorEnabled by remember { mutableStateOf(prefs.isStepSensorEnabled()) }
     var pressureSensorEnabled by remember { mutableStateOf(prefs.isPressureSensorEnabled()) }
+
+    // ViewModel의 에러 메시지를 감지하여 Toast로 표시
+    LaunchedEffect(uiState.error) {
+        uiState.error?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            onClearError() // Toast를 표시한 후 에러 상태를 초기화
+        }
+    }
 
     fun sendSensorSettingsChangedBroadcast() {
         val intent = Intent(LocationTrackingService.ACTION_SENSOR_SETTINGS_CHANGED)
@@ -73,6 +86,13 @@ fun SettingsScreen(
             text = "개인 설정",
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
+        )
+
+        SettingItem(
+            icon = Icons.Default.AccountCircle,
+            title = "닉네임 변경",
+            subtitle = user?.displayName ?: "",
+            onClick = { showDisplayNameDialog = true }
         )
 
         SettingItem(
@@ -241,6 +261,17 @@ fun SettingsScreen(
         )
     }
 
+    if (showDisplayNameDialog) {
+        DisplayNameInputDialog(
+            currentDisplayName = user?.displayName ?: "",
+            onDismiss = { showDisplayNameDialog = false },
+            onConfirm = {
+                onDisplayNameUpdate(it)
+                showDisplayNameDialog = false
+            }
+        )
+    }
+
     if (showStrideDialog) {
         StrideInputDialog(
             currentStride = prefs.getUserStride(),
@@ -310,6 +341,56 @@ fun SettingsScreen(
             }
         )
     }
+}
+
+@Composable
+private fun DisplayNameInputDialog(
+    currentDisplayName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var displayNameText by remember { mutableStateOf(currentDisplayName) }
+    var isError by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("닉네임 변경") },
+        text = {
+            Column {
+                Text("다른 사용자가 나를 식별하는 이름입니다.")
+                Spacer(modifier = Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = displayNameText,
+                    onValueChange = {
+                        displayNameText = it
+                        isError = false
+                    },
+                    label = { Text("닉네임") },
+                    isError = isError,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    if (displayNameText.isNotBlank()) {
+                        onConfirm(displayNameText)
+                    } else {
+                        isError = true
+                    }
+                }
+            ) {
+                Text("확인")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("취소")
+            }
+        }
+    )
 }
 
 @Composable

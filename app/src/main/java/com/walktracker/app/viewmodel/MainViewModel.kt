@@ -11,6 +11,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.walktracker.app.model.DailyActivity
 import com.walktracker.app.model.RankingEntry
 import com.walktracker.app.model.RankingLeaderboard
@@ -274,6 +275,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 loadUserData()
             }
         }
+    }
+
+    fun updateUserDisplayName(displayName: String) {
+        viewModelScope.launch {
+            val userId = repository.getCurrentUserId() ?: return@launch
+            if (displayName.isBlank() || displayName == _uiState.value.user?.displayName) {
+                return@launch
+            }
+
+            _uiState.update { it.copy(isLoading = true, error = null) }
+
+            // [수정] 트랜잭션 전에 닉네임 중복 여부를 먼저 확인 (빠른 UI 피드백용)
+            if (!repository.isDisplayNameAvailable(displayName)) {
+                _uiState.update { it.copy(isLoading = false, error = "이미 사용 중인 닉네임입니다. 다른 닉네임을 입력해주세요.") }
+                return@launch
+            }
+
+            // 닉네임 사용 가능 시, 안전한 트랜잭션 실행
+            val result = repository.updateUserDisplayName(userId, displayName)
+
+            if (result.isSuccess) {
+                loadUserData() // 성공 시 사용자 정보 다시 로드
+            } else {
+                val errorMessage = when ((result.exceptionOrNull() as? FirebaseFirestoreException)?.code) {
+                    // 이 체크는 사전 확인과 트랜잭션 사이의 레이스 컨디션 발생 시 여전히 필요합니다.
+                    FirebaseFirestoreException.Code.ALREADY_EXISTS -> "이미 사용 중인 닉네임입니다. 다른 닉네임을 입력해주세요."
+                    FirebaseFirestoreException.Code.PERMISSION_DENIED -> "닉네임을 변경할 권한이 없습니다. 다시 로그인 후 시도해주세요."
+                    else -> "닉네임 변경 중 오류가 발생했습니다: ${result.exceptionOrNull()?.message}"
+                }
+                _uiState.update { it.copy(isLoading = false, error = errorMessage) }
+            }
+        }
+    }
+
+    fun clearError() {
+        _uiState.update { it.copy(error = null) }
     }
 
     fun loadRankings(period: RankingPeriod) {
