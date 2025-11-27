@@ -23,10 +23,13 @@ import com.walktracker.app.model.User
 import com.walktracker.app.service.LocationTrackingService
 import com.walktracker.app.util.SharedPreferencesManager
 import com.walktracker.app.viewmodel.MainUiState
+import com.walktracker.app.viewmodel.MainViewModel
+import kotlinx.coroutines.flow.collectLatest
 
 @Composable
 fun SettingsScreen(
     uiState: MainUiState,
+    viewModel: MainViewModel, // ViewModel 추가
     onClearError: () -> Unit,
     onWeightUpdate: (Double) -> Unit,
     onDisplayNameUpdate: (String) -> Unit,
@@ -57,6 +60,14 @@ fun SettingsScreen(
         uiState.error?.let {
             Toast.makeText(context, it, Toast.LENGTH_LONG).show()
             onClearError() // Toast를 표시한 후 에러 상태를 초기화
+        }
+    }
+
+    // 닉네임 변경 성공 시 다이얼로그 닫기
+    LaunchedEffect(Unit) {
+        viewModel.updateDisplayNameSuccess.collectLatest {
+            showDisplayNameDialog = false
+            Toast.makeText(context, "닉네임이 변경되었습니다.", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -265,10 +276,7 @@ fun SettingsScreen(
         DisplayNameInputDialog(
             currentDisplayName = user?.displayName ?: "",
             onDismiss = { showDisplayNameDialog = false },
-            onConfirm = {
-                onDisplayNameUpdate(it)
-                showDisplayNameDialog = false
-            }
+            onConfirm = onDisplayNameUpdate
         )
     }
 

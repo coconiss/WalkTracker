@@ -317,7 +317,8 @@ fun MainApp(
             }
             composable("settings") {
                 SettingsScreen(
-                    uiState = uiState, // uiState 전달
+                    uiState = uiState,
+                    viewModel = viewModel,
                     onClearError = { viewModel.clearError() }, // clearError 함수 전달
                     onWeightUpdate = {
                         viewModel.updateUserWeight(it)

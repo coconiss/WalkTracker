@@ -60,6 +60,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _rankingState = MutableStateFlow(RankingUiState())
     val rankingState: StateFlow<RankingUiState> = _rankingState.asStateFlow()
 
+    private val _updateDisplayNameSuccess = MutableSharedFlow<Unit>()
+    val updateDisplayNameSuccess = _updateDisplayNameSuccess.asSharedFlow()
+
     private var currentUserId: String? = null
 
     // 랭킹 캐시 유효 시간: 1시간
@@ -296,6 +299,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val result = repository.updateUserDisplayName(userId, displayName)
 
             if (result.isSuccess) {
+                _updateDisplayNameSuccess.emit(Unit)
                 loadUserData() // 성공 시 사용자 정보 다시 로드
             } else {
                 val errorMessage = when ((result.exceptionOrNull() as? FirebaseFirestoreException)?.code) {
