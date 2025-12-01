@@ -303,6 +303,26 @@ class FirebaseRepository(context: Context) {
         }
     }
 
+    suspend fun syncLocalActivityToFirestore(userId: String, date: String): Result<Unit> {
+        return try {
+            val localActivityEntity = dailyActivityDao.getActivityByUserAndDate(userId, date)
+
+            if (localActivityEntity != null) {
+                val activityToSync = localActivityEntity.toDailyActivity()
+                val docId = activityToSync.id
+                val activityDocRef = activitiesCollection.document(docId)
+                activityDocRef.set(activityToSync).await()
+                Log.d(TAG, "Successfully synced local activity for date $date to Firestore.")
+            } else {
+                Log.d(TAG, "No local activity found for date $date to sync.")
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to sync local activity for date $date to Firestore.", e)
+            Result.failure(e)
+        }
+    }
+
     suspend fun getDailyActivityLocal(userId: String, date: String): DailyActivity? {
         return try {
             val local = dailyActivityDao.getActivityByUserAndDate(userId, date)

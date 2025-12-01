@@ -191,25 +191,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadInitialTodayActivity() {
-        if (_uiState.value.todayActivity != null) {
+        if (_uiState.value.todayActivity != null && _uiState.value.todayActivity?.date == dateFormat.format(Date())) {
             return
         }
 
         viewModelScope.launch {
             val userId = repository.getCurrentUserId() ?: return@launch
-            val today = dateFormat.format(Date())
 
-            // 먼저 로컬 Room에서 조회
+            // 어제 날짜의 로컬 데이터가 있다면 Firestore에 동기화
+            val calendar = Calendar.getInstance().apply { add(Calendar.DATE, -1) }
+            val yesterday = dateFormat.format(calendar.time)
+            repository.syncLocalActivityToFirestore(userId, yesterday)
+
+
+            // 오늘의 활동 데이터 로드
+            val today = dateFormat.format(Date())
             val localActivity = repository.getDailyActivityLocal(userId, today)
             if (localActivity != null) {
                 _uiState.update { it.copy(todayActivity = localActivity) }
                 Log.d("MainViewModel", "로컬 데이터 로드 성공")
             } else {
-                // 로컬에 없으면 Firestore에서 조회
                 repository.getDailyActivityOnce(userId, today) { activity ->
                     if (activity != null) {
                         _uiState.update { it.copy(todayActivity = activity) }
                         Log.d("MainViewModel", "Firestore 데이터 로드 성공")
+                    } else {
+                        // 오늘 데이터가 어디에도 없으면 초기화된 객체 생성
+                        val newActivity = DailyActivity(userId = userId, date = today)
+                        _uiState.update { it.copy(todayActivity = newActivity) }
                     }
                 }
             }
