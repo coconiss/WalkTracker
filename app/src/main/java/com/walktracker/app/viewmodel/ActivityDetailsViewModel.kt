@@ -5,7 +5,6 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FieldPath
 import com.google.firebase.firestore.FirebaseFirestore
 import com.walktracker.app.model.RoutePoint
 import com.walktracker.app.ui.screen.ActivityDetailData
@@ -35,6 +34,7 @@ data class ActivityDetailsUiState(
 )
 
 data class FirestoreDailyActivity(
+    val userId: String = "",
     val steps: Long = 0L,
     val distance: Double = 0.0,
     val calories: Double = 0.0,
@@ -91,23 +91,18 @@ class ActivityDetailsViewModel(application: Application) : AndroidViewModel(appl
                 val startDateString = dateFormat.format(Date(_uiState.value.startDate))
                 val endDateString = dateFormat.format(Date(_uiState.value.endDate))
 
-                val startDocId = "${currentUser.uid}_$startDateString"
-                val endDocId = "${currentUser.uid}_$endDateString"
-
-                Log.d(TAG, "Querying 'daily_activities' for doc IDs from $startDocId to $endDocId")
+                Log.d(TAG, "Querying 'daily_activities' for user ${currentUser.uid} from $startDateString to $endDateString")
 
                 val querySnapshot = firestore.collection("daily_activities")
-                    .orderBy(FieldPath.documentId())
-                    .startAt(startDocId)
-                    .endAt(endDocId)
+                    .whereEqualTo("userId", currentUser.uid)
+                    .whereGreaterThanOrEqualTo("date", startDateString)
+                    .whereLessThanOrEqualTo("date", endDateString)
                     .get()
                     .await()
 
                 Log.d(TAG, "Firestore query returned ${querySnapshot.size()} documents.")
 
                 val activityList = querySnapshot.documents.mapNotNull { doc ->
-                    if (!doc.id.startsWith(currentUser.uid)) return@mapNotNull null
-
                     val firestoreData = doc.toObject(FirestoreDailyActivity::class.java)
                     if (firestoreData == null) {
                         Log.w(TAG, "Failed to parse document: ${doc.id}")
