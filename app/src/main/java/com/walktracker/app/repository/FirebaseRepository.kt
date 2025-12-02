@@ -224,6 +224,7 @@ class FirebaseRepository(context: Context) {
         altitude: Double,
         routes: List<RoutePoint> = emptyList()
     ): Result<Unit> {
+        Log.d(TAG, "Room 활동 업데이트 시도 - userId: $userId, date: $date, steps 증분: $steps")
         return try {
             dailyActivityDao.incrementActivity(
                 userId = userId,
@@ -234,10 +235,10 @@ class FirebaseRepository(context: Context) {
                 altitudeIncrement = altitude,
                 newRoutes = routes
             )
-            Log.d(TAG, "Room 저장 성공: steps=$steps, distance=$distance")
+            Log.d(TAG, "Room 활동 업데이트 성공 - userId: $userId, date: $date")
             Result.success(Unit)
         } catch (e: Exception) {
-            Log.e(TAG, "Room 저장 실패", e)
+            Log.e(TAG, "Room 활동 업데이트 실패 - userId: $userId, date: $date", e)
             Result.failure(e)
         }
     }
@@ -330,6 +331,27 @@ class FirebaseRepository(context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "로컬 데이터 조회 실패", e)
             null
+        }
+    }
+    
+    suspend fun resetTodayFirestoreActivity(userId: String, date: String): Result<Unit> {
+        val docId = "${userId}_$date"
+        Log.d(TAG, "Firestore 활동 초기화 시도 - docId: $docId")
+        return try {
+            val resetData = mapOf(
+                "steps" to 0,
+                "distance" to 0.0,
+                "calories" to 0.0,
+                "altitude" to 0.0,
+                "routes" to emptyList<RoutePoint>(),
+                "updatedAt" to Timestamp.now()
+            )
+            activitiesCollection.document(docId).set(resetData, com.google.firebase.firestore.SetOptions.merge()).await()
+            Log.d(TAG, "Firestore 활동 초기화 성공 - docId: $docId")
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "Firestore 활동 초기화 실패 - docId: $docId", e)
+            Result.failure(e)
         }
     }
 

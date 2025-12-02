@@ -252,6 +252,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val userId = repository.getCurrentUserId() ?: return@launch
             val today = dateFormat.format(Date())
 
+            // Firestore 데이터 초기화
+            repository.resetTodayFirestoreActivity(userId, today)
+
             val resetActivity = DailyActivity(
                 userId = userId,
                 date = today,
@@ -261,7 +264,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 altitude = 0.0
             )
 
-            // Firestore가 아닌 Room에 저장 (동기화는 서비스에서 자동 처리)
+            // Room 데이터 초기화
             repository.incrementDailyActivityLocal(
                 userId = userId,
                 date = today,
