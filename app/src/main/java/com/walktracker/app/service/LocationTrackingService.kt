@@ -110,22 +110,22 @@ class LocationTrackingService : Service(), SensorEventListener {
         private const val SYNC_INTERVAL = 600000L
 
         // 위치 업데이트 간격
-        private const val LOCATION_INTERVAL_WALKING = 10000L // [수정] 반응성을 위해 약간 단축 (기존 20s -> 10s)
-        private const val LOCATION_INTERVAL_RUNNING = 5000L  // [수정] (기존 15s -> 5s)
+        private const val LOCATION_INTERVAL_WALKING = 10000L
+        private const val LOCATION_INTERVAL_RUNNING = 5000L
         private const val LOCATION_INTERVAL_STILL = 120000L
 
         // 거리/속도 임계값
-        private const val MIN_DISTANCE_THRESHOLD = 3.0 // [수정] 5.0 -> 3.0 (정밀한 필터링을 위해 낮추되, 아래 로직으로 보완)
+        private const val MIN_DISTANCE_THRESHOLD = 3.0
         private const val MAX_SPEED_MPS = 5.5  // 약 20km/h
 
-        // [수정] 최소 유효 속도: 이 속도보다 느리면 GPS 노이즈로 간주하고 거리에 합산하지 않음
+        // 최소 유효 속도
         private const val MIN_VALID_SPEED_MPS = 0.3f
 
         private const val MAX_WALKING_SPEED_MPS = 2.5f
         private const val MIN_WALKING_SPEED_MPS = 0.5f
         private const val MAX_TIME_DIFFERENCE_SECONDS = 60L
 
-        // [수정] 정확도 기준 강화: 50m -> 25m (실내 튀는 현상 방지 핵심)
+        // 정확도 기준 강화(가상머신 테스트용도로 100으로 바꿈. 원래 25f)
         private const val MIN_ACCURACY_METERS = 25f
 
         // 속도 타임아웃
@@ -162,8 +162,6 @@ class LocationTrackingService : Service(), SensorEventListener {
         const val ACTION_USER_DATA_CHANGED = "com.walktracker.app.USER_DATA_CHANGED"
     }
 
-    // ... (Receiver 등 기존 코드 동일) ...
-    // BroadcastReceiver 등은 변경 사항 없음으로 생략 가능하나 전체 구조 유지를 위해 유지
     private val userDataChangeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == ACTION_USER_DATA_CHANGED) {
@@ -260,7 +258,6 @@ class LocationTrackingService : Service(), SensorEventListener {
         startSpeedMonitoring()
     }
 
-    // ... (loadSensorSettings, updateSensorRegistrations, onDestroy, resetAllData 등 기존 동일) ...
     private fun loadSensorSettings() {
         isGpsEnabled = syncPrefs.isGpsEnabled()
         isStepSensorEnabled = syncPrefs.isStepSensorEnabled()
@@ -359,26 +356,42 @@ class LocationTrackingService : Service(), SensorEventListener {
     private fun startPeriodicSync() {
         serviceScope.launch {
             while (isActive) {
+                Log.d(TAG, "주기적 동기화 실행 대기... (${SYNC_INTERVAL / 1000}초 후)")
                 delay(SYNC_INTERVAL)
+                Log.d(TAG, "주기적 동기화 실행!")
                 syncToFirebase()
             }
         }
     }
 
-    // ... (syncToFirebase 로직은 Repository 호출이므로 기존 유지) ...
     private suspend fun syncToFirebase(dateToSync: String? = null) {
-        val userId = repository.getCurrentUserId() ?: return
+        val userId = repository.getCurrentUserId()
+        if (userId == null) {
+            Log.w(TAG, "syncToFirebase: 사용자 ID가 없어 동기화를 건너뜁니다.")
+            return
+        }
+
         val date = dateToSync ?: dateFormat.format(Date())
+        Log.i(TAG, "=========================================")
+        Log.i(TAG, "Firebase 동기화 시작 (날짜: $date)")
+        Log.i(TAG, "=========================================")
+
 
         val stepsIncrement = currentSteps - stepsSynced
         val distanceIncrement = totalDistance - distanceSynced
         val caloriesIncrement = totalCalories - caloriesSynced
         val altitudeIncrement = totalAltitudeGain - altitudeSynced
 
-        // [수정] 의미 없는 0 동기화 방지 및 마이너스 방지
-        if (stepsIncrement <= 0 && distanceIncrement <= 0.0 && routePoints.isEmpty()) {
-            // 동기화할 데이터가 없음.
-            // 하지만 미동기화된(Unsynced) 이전 데이터가 있을 수 있으니 체크
+        Log.d(TAG, "동기화 데이터 분석:")
+        Log.d(TAG, "  - 현재 걸음: $currentSteps, 동기화된 걸음: $stepsSynced -> 증분: $stepsIncrement")
+        Log.d(TAG, "  - 현재 거리: $totalDistance, 동기화된 거리: $distanceSynced -> 증분: $distanceIncrement")
+        Log.d(TAG, "  - 현재 칼로리: $totalCalories, 동기화된 칼로리: $caloriesSynced -> 증분: $caloriesIncrement")
+        Log.d(TAG, "  - 현재 고도: $totalAltitudeGain, 동기화된 고도: $altitudeSynced -> 증분: $altitudeIncrement")
+        Log.d(TAG, "  - 새로운 경로 포인트 수: ${routePoints.size}")
+
+
+        if (stepsIncrement <= 0 && distanceIncrement <= 0.0 && caloriesIncrement <= 0.0 && altitudeIncrement <= 0.0 && routePoints.isEmpty()) {
+            Log.i(TAG, "syncToFirebase: 동기화할 새로운 활동 데이터가 없습니다. 미동기화된 데이터만 동기화를 시도합니다.")
             repository.syncUnsyncedActivities()
             return
         }
@@ -389,6 +402,14 @@ class LocationTrackingService : Service(), SensorEventListener {
         val totalCaloriesToSync = caloriesIncrement + (unsyncedData["calories"] as? Double ?: 0.0)
         val totalAltitudeToSync = altitudeIncrement + (unsyncedData["altitude"] as? Double ?: 0.0)
         val routesToSync = routePoints.toList()
+
+        Log.i(TAG, "총 동기화 데이터:")
+        Log.d(TAG, "  - 걸음: $totalStepsToSync (현재 증분: $stepsIncrement + 이전 미동기화: ${unsyncedData["steps"]})")
+        Log.d(TAG, "  - 거리: $totalDistanceToSync (현재 증분: $distanceIncrement + 이전 미동기화: ${unsyncedData["distance"]})")
+        Log.d(TAG, "  - 칼로리: $totalCaloriesToSync (현재 증분: $caloriesIncrement + 이전 미동기화: ${unsyncedData["calories"]})")
+        Log.d(TAG, "  - 고도: $totalAltitudeToSync (현재 증분: $altitudeIncrement + 이전 미동기화: ${unsyncedData["altitude"]})")
+        Log.d(TAG, "  - 경로 포인트: ${routesToSync.size}개")
+
 
         val localResult = repository.incrementDailyActivityLocal(
             userId = userId,
@@ -401,17 +422,25 @@ class LocationTrackingService : Service(), SensorEventListener {
         )
 
         if (localResult.isSuccess) {
+            Log.i(TAG, "syncToFirebase: 로컬 DB 저장 성공. 동기화 상태를 업데이트합니다.")
             syncPrefs.clearUnsyncedData()
             routePoints.clear()
-            stepsSynced += stepsIncrement // [수정] 이번에 처리한 증가분만 더함 (unsynced는 이미 처리됨)
+            stepsSynced += stepsIncrement
             distanceSynced += distanceIncrement
             caloriesSynced += caloriesIncrement
             altitudeSynced += altitudeIncrement
+            Log.d(TAG, "  - 동기화 후 상태: 걸음=$stepsSynced, 거리=$distanceSynced")
 
+            Log.d(TAG, "미동기화된 활동을 Firebase와 동기화합니다.")
             repository.syncUnsyncedActivities()
         } else {
+            Log.e(TAG, "syncToFirebase: 로컬 DB 저장 실패! 현재 증분 데이터를 미동기화 데이터로 저장합니다.", localResult.exceptionOrNull())
             syncPrefs.addUnsyncedData(stepsIncrement, distanceIncrement, caloriesIncrement, altitudeIncrement)
+            Log.d(TAG, "  - 미동기화 데이터로 저장된 값: 걸음=$stepsIncrement, 거리=$distanceIncrement")
         }
+        Log.i(TAG, "=========================================")
+        Log.i(TAG, "Firebase 동기화 종료")
+        Log.i(TAG, "=========================================")
     }
 
     override fun onSensorChanged(event: SensorEvent) {
@@ -428,7 +457,6 @@ class LocationTrackingService : Service(), SensorEventListener {
                     initialStepCount = totalStepsFromBoot
                 }
 
-                // [수정] 0 미만 방지
                 val calculatedSteps = totalStepsFromBoot - initialStepCount
                 if (calculatedSteps >= 0) {
                     currentSteps = calculatedSteps
@@ -481,27 +509,19 @@ class LocationTrackingService : Service(), SensorEventListener {
         return System.currentTimeMillis() - activityTransitionTime < TRANSITION_STABILIZATION_TIME
     }
 
-    // =========================================================================
-    // [중요 수정 구간] 위치 처리 로직 강화
-    // =========================================================================
     private fun handleNewLocation(location: Location) {
         if (!isGpsEnabled) return
 
-        // 1. [수정] 정확도 필터 강화 (50m -> 25m)
-        // 정확도가 매우 낮은 데이터는 아예 무시합니다.
         if (location.hasAccuracy() && location.accuracy > MIN_ACCURACY_METERS) {
             Log.d(TAG, "[LOCATION] 정확도 낮음(${location.accuracy}m) - 무시")
             return
         }
 
-        // 2. [수정] 활동 상태 필터링 (가장 중요한 수정)
-        // 현재 활동이 '정지(STILL)' 상태라면, GPS가 움직여도 거리를 누적하지 않습니다.
-        // 단, 차량 모드는 별도 처리
         if (currentActivityType == ActivityType.STILL) {
             Log.d(TAG, "[LOCATION] 정지(STILL) 상태임. 위치 업데이트만 수행하고 거리 누적 안 함.")
             previousLocation = location
             resetSpeed()
-            broadcastLocationUpdate() // 지도의 내 위치 마커는 업데이트 해줌
+            broadcastLocationUpdate()
             return
         }
 
@@ -511,16 +531,6 @@ class LocationTrackingService : Service(), SensorEventListener {
             broadcastLocationUpdate()
             return
         }
-
-        val currentDate = dateFormat.format(Date())
-        if (lastProcessedDate.isNotEmpty() && lastProcessedDate != currentDate) {
-            serviceScope.launch {
-                syncToFirebase(lastProcessedDate)
-                resetTodayData()
-                loadInitialDailyData()
-            }
-        }
-        lastProcessedDate = currentDate
 
         if (isInTransitionPeriod()) {
             transitionLocationBuffer.add(location)
@@ -540,7 +550,7 @@ class LocationTrackingService : Service(), SensorEventListener {
         }
 
         val prev = previousLocation!!
-        val timeDifferenceSeconds = (location.time - prev.time) / 1000.0 // [수정] double 연산
+        val timeDifferenceSeconds = (location.time - prev.time) / 1000.0
 
         if (timeDifferenceSeconds <= 0) return
 
@@ -553,20 +563,12 @@ class LocationTrackingService : Service(), SensorEventListener {
 
         val distance = prev.distanceTo(location)
 
-        // 3. [수정] 거리 노이즈 필터링 강화
-        // 이동 거리가 임계값 미만이면 무시
         if (distance < MIN_DISTANCE_THRESHOLD) {
-            // 위치가 거의 안 변했으므로 무시하되, 현재 위치로 갱신은 하지 않음(누적 오차 방지)
-            // 단, 너무 오랫동안 갱신 안되면 점프할 수 있으니 time check 등은 필요하나
-            // 여기서는 단순 무시가 GPS drift 방지에 효과적.
             return
         }
 
         val rawSpeed = (distance / timeDifferenceSeconds).toFloat()
 
-        // 4. [수정] 속도 기반 노이즈 필터링
-        // 계산된 속도가 너무 느리면(예: 0.2m/s) GPS가 살짝 튄 노이즈일 확률이 높음.
-        // 실제 걷기는 보통 0.8m/s 이상임.
         if (rawSpeed < MIN_VALID_SPEED_MPS) {
             Log.d(TAG, "[LOCATION] 속도 너무 느림(${"%.2f".format(rawSpeed)}m/s) - 노이즈로 간주")
             return
@@ -588,7 +590,6 @@ class LocationTrackingService : Service(), SensorEventListener {
         val distanceKm = distance / 1000.0
         totalDistance += distanceKm
 
-        // 고도 계산
         val isMoving = currentSpeed > MIN_WALKING_SPEED_MPS
         if (isPressureSensorEnabled && lastPressureValue > 0f && pressureAtPreviousLocation != null) {
             val threshold = if (currentActivityType == ActivityType.RUNNING) PRESSURE_CHANGE_THRESHOLD_RUNNING else PRESSURE_CHANGE_THRESHOLD_WALKING
@@ -603,18 +604,13 @@ class LocationTrackingService : Service(), SensorEventListener {
             }
         }
 
-        // 5. [수정] GPS 기반 걸음 수 계산 조건 강화
-        // 하드웨어 스텝 센서가 활성화되어 있고 정상 작동 중이면, GPS로 걸음 수를 덮어쓰지 않음.
-        // 스텝 센서가 없거나(isStepSensorEnabled == false) 고장난 경우에만 GPS 거리를 사용.
         if (!isStepSensorEnabled && userStride > 0) {
             val stepsFromDistance = (totalDistance * 1000 / userStride).toLong()
-            // 기존 걸음 수보다 줄어드는 경우 방지 (Max 처리)
             if (stepsFromDistance > currentSteps) {
                 currentSteps = stepsFromDistance
             }
         }
 
-        // 칼로리 계산
         val caloriesBurned = CalorieCalculator.calculate(
             weightKg = userWeight,
             speedMps = currentSpeed,
@@ -656,18 +652,29 @@ class LocationTrackingService : Service(), SensorEventListener {
     }
 
     private fun resetTodayData() {
+        Log.d(TAG, "오늘 데이터 초기화 (resetTodayData) 실행")
+        isInitialDataLoaded = false // 데이터 로드 전까지 UI 업데이트 방지
+
+        // 일일 누적 데이터 초기화
         stepsAtStartOfDay = 0L
         distanceAtStartOfDay = 0.0
         caloriesAtStartOfDay = 0.0
         altitudeAtStartOfDay = 0.0
+
+        // 현재 세션 데이터 초기화
         currentSteps = 0L
         totalDistance = 0.0
         totalCalories = 0.0
         totalAltitudeGain = 0.0
+        initialStepCount = 0L // [핵심 수정] 걸음수 계산 기준 초기화
+
+        // 동기화 데이터 초기화
         stepsSynced = 0L
         distanceSynced = 0.0
         caloriesSynced = 0.0
         altitudeSynced = 0.0
+
+        // 기타 상태 초기화
         lastPressureValue = 0f
         pressureAtPreviousLocation = null
         previousLocation = null
@@ -675,7 +682,17 @@ class LocationTrackingService : Service(), SensorEventListener {
         syncPrefs.clearUnsyncedData()
         altitudeCalculator.reset()
         resetSpeed()
-        updateAndBroadcast()
+
+        serviceScope.launch {
+            repository.resetTodayData(dateFormat.format(Date()))
+            withContext(Dispatchers.Main) {
+                loadInitialDailyData()
+            }
+        }
+
+        // 초기화된 상태 즉시 브로드캐스트
+        broadcastActivityUpdate(forceImmediate = true)
+        updateNotification()
     }
 
     private fun updateAndBroadcast() {
@@ -820,8 +837,6 @@ class LocationTrackingService : Service(), SensorEventListener {
             setMaxUpdateDelayMillis(interval * 2)
             setWaitForAccurateLocation(false)
             if (currentActivityType != ActivityType.RUNNING) {
-                // [수정] 이동 임계값을 살짝 낮춰서 FusedLocationProvider가 너무 자주 무시하지 않도록 하되,
-                // handleNewLocation에서 직접 필터링 수행
                 setMinUpdateDistanceMeters(MIN_DISTANCE_THRESHOLD.toFloat())
             }
         }.build()
@@ -855,10 +870,27 @@ class LocationTrackingService : Service(), SensorEventListener {
         } catch (e: SecurityException) {}
     }
 
+    private fun checkDateChanged() {
+        val currentDate = dateFormat.format(Date())
+        if (lastProcessedDate.isNotEmpty() && lastProcessedDate != currentDate) {
+            Log.d(TAG, "날짜 변경 감지: $lastProcessedDate -> $currentDate. 데이터 동기화 및 초기화 실행.")
+            serviceScope.launch {
+                syncToFirebase(lastProcessedDate) // 어제 날짜로 데이터 동기화
+                withContext(Dispatchers.Main) {
+                    resetTodayData() // 오늘 데이터 초기화
+                    loadInitialDailyData() // 새로 초기화된 오늘 데이터 로드
+                }
+            }
+        }
+        lastProcessedDate = currentDate
+    }
+
     private fun startStillDetection() {
         serviceScope.launch {
             while (isActive) {
-                delay(60000L)
+                delay(60000L) // 1분마다 실행
+                checkDateChanged() // 날짜 변경 확인
+
                 val timeSinceLastActivity = System.currentTimeMillis() - lastActivityTime
                 if (timeSinceLastActivity > STILL_DETECTION_TIME && !isStillMode) {
                     enterStillMode()

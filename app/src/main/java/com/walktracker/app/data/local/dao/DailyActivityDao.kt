@@ -31,6 +31,13 @@ interface DailyActivityDao {
     @Query("DELETE FROM daily_activities WHERE userId = :userId")
     suspend fun deleteAllForUser(userId: String)
 
+    @Query("""
+        UPDATE daily_activities 
+        SET steps = 0, distance = 0.0, calories = 0.0, altitude = 0.0, routes = '[]', isSynced = 0, lastModified = :currentTime
+        WHERE userId = :userId AND date = :date
+    """)
+    suspend fun resetActivity(userId: String, date: String, currentTime: Long = System.currentTimeMillis())
+
     @Transaction
     suspend fun incrementActivity(
         userId: String,

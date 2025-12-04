@@ -235,7 +235,8 @@ class FirebaseRepository(context: Context) {
                 altitudeIncrement = altitude,
                 newRoutes = routes
             )
-            Log.d(TAG, "Room 활동 업데이트 성공 - userId: $userId, date: $date")
+            val updatedActivity = dailyActivityDao.getActivityByUserAndDate(userId, date)
+            Log.d(TAG, "Room 활동 업데이트 성공 후 데이터: $updatedActivity")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Room 활동 업데이트 실패 - userId: $userId, date: $date", e)
@@ -255,40 +256,11 @@ class FirebaseRepository(context: Context) {
 
             for (localActivity in unsyncedList) {
                 try {
-                    val docId = localActivity.id
-                    val routes: List<RoutePoint> = gson.fromJson(
-                        localActivity.routes,
-                        object : TypeToken<List<RoutePoint>>() {}.type
-                    )
+                    val activityToSync = localActivity.toDailyActivity()
+                    val activityDocRef = activitiesCollection.document(activityToSync.id)
 
-                    val activityDocRef = activitiesCollection.document(docId)
-                    val activitySnapshot = activityDocRef.get().await()
-
-                    if (activitySnapshot.exists()) {
-                        activityDocRef.update(
-                            mapOf(
-                                "steps" to FieldValue.increment(localActivity.steps),
-                                "distance" to FieldValue.increment(localActivity.distance),
-                                "calories" to FieldValue.increment(localActivity.calories),
-                                "altitude" to FieldValue.increment(localActivity.altitude),
-                                "routes" to FieldValue.arrayUnion(*routes.toTypedArray()),
-                                "updatedAt" to Timestamp.now()
-                            )
-                        ).await()
-                    } else {
-                        val newActivity = DailyActivity(
-                            id = docId,
-                            userId = localActivity.userId,
-                            date = localActivity.date,
-                            steps = localActivity.steps,
-                            distance = localActivity.distance,
-                            calories = localActivity.calories,
-                            altitude = localActivity.altitude,
-                            routes = routes,
-                            updatedAt = Timestamp.now()
-                        )
-                        activityDocRef.set(newActivity).await()
-                    }
+                    // 항상 set()을 사용하여 문서를 덮어씁니다.
+                    activityDocRef.set(activityToSync).await()
 
                     dailyActivityDao.markAsSynced(localActivity.id)
                     Log.d(TAG, "Firestore 동기화 완료: ${localActivity.id}")
@@ -355,6 +327,12 @@ class FirebaseRepository(context: Context) {
         }
     }
 
+    private suspend fun resetDailyActivityLocal(userId: String, date: String) {
+        Log.d(TAG, "Room 활동 초기화 시도 - userId: $userId, date: $date")
+        dailyActivityDao.resetActivity(userId, date)
+        Log.d(TAG, "Room 활동 초기화 성공 - userId: $userId, date: $date")
+    }
+
     suspend fun getDailyActivityOnce(userId: String, date: String, onComplete: (DailyActivity?) -> Unit) {
         val docId = "${userId}_$date"
         activitiesCollection.document(docId).get()
@@ -374,6 +352,22 @@ class FirebaseRepository(context: Context) {
             .addOnFailureListener {
                 onResult(emptyList())
             }
+    }
+
+    suspend fun resetTodayData(date: String): Result<Unit> {
+        val userId = getCurrentUserId() ?: return Result.failure(Exception("User not logged in"))
+        Log.d(TAG, "오늘 데이터 초기화 실행 - userId: $userId, date: $date")
+        return try {
+            // Room 데이터 초기화
+            resetDailyActivityLocal(userId, date)
+            // Firestore 데이터 초기화
+            resetTodayFirestoreActivity(userId, date)
+
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "오늘 데이터 초기화 실패 - userId: $userId, date: $date", e)
+            Result.failure(e)
+        }
     }
 
     fun getUserActivitiesFlow(userId: String, limit: Int = 30): Flow<List<DailyActivity>> {
