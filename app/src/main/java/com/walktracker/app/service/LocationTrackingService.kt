@@ -63,22 +63,24 @@ class LocationTrackingService : Service(), SensorEventListener {
 
     // --- 현재 세션 데이터 ---
     private var initialStepCount = 0L
-    private var currentSteps = 0L
+    private var currentSteps = 0L  // 최종 걸음 수 (센서 + GPS 기반 모두 포함)
+    private var sensorBasedSteps = 0L  // 센서(가속도계) 기반 걸음
+    private var gpsBasedSteps = 0L  // GPS 거리 기반 걸음
     private var totalDistance = 0.0
     private var totalCalories = 0.0
     private var totalAltitudeGain = 0.0
     private var currentSpeed = 0.0f
     private var isInitialDataLoaded = false
     private var lastProcessedDate: String = ""
+    private var lastDistanceForStepCalculation = 0.0  // GPS 기반 걸음 계산용 이전 거리
+    private var lastStepCountForDistanceCalc = 0L  // 거리 계산용 이전 걸음 수
 
     // --- 속도 추적 개선 ---
     private var lastSpeedUpdateTime = 0L
-    private var lastValidMovementTime = 0L
 
     // --- 위치 및 활동 관련 데이터 ---
     private var previousLocation: Location? = null
     private var currentActivityType = ActivityType.WALKING
-    private var previousActivityType = ActivityType.UNKNOWN
     private var activityTransitionTime = 0L
     private var userWeight = 70.0
     private var userStride = 0.7
@@ -121,7 +123,6 @@ class LocationTrackingService : Service(), SensorEventListener {
         // 최소 유효 속도
         private const val MIN_VALID_SPEED_MPS = 0.3f
 
-        private const val MAX_WALKING_SPEED_MPS = 2.5f
         private const val MIN_WALKING_SPEED_MPS = 0.5f
         private const val MAX_TIME_DIFFERENCE_SECONDS = 60L
 
@@ -166,6 +167,7 @@ class LocationTrackingService : Service(), SensorEventListener {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == ACTION_USER_DATA_CHANGED) {
                 loadUserData()
+                Log.d(TAG, "사용자 데이터 변경 감지: userStride 갱신됨")
             }
         }
     }
@@ -180,7 +182,7 @@ class LocationTrackingService : Service(), SensorEventListener {
     }
 
     private val activityTypeReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
+            override fun onReceive(context: Context?, intent: Intent?) {
             val typeString = intent?.getStringExtra(ActivityRecognitionReceiver.EXTRA_ACTIVITY_TYPE)
             val newActivityType = when (typeString) {
                 "WALKING" -> ActivityType.WALKING
@@ -193,8 +195,7 @@ class LocationTrackingService : Service(), SensorEventListener {
             Log.d(TAG, "활동 유형 수신: $typeString -> $newActivityType")
 
             if (newActivityType != currentActivityType) {
-                handleActivityTransition(currentActivityType, newActivityType)
-                previousActivityType = currentActivityType
+                    handleActivityTransition(currentActivityType, newActivityType)
                 currentActivityType = newActivityType
                 activityTransitionTime = System.currentTimeMillis()
                 updateLocationRequest()
@@ -259,6 +260,9 @@ class LocationTrackingService : Service(), SensorEventListener {
     }
 
     private fun loadSensorSettings() {
+        val previousGpsEnabled = isGpsEnabled
+        val previousStepSensorEnabled = isStepSensorEnabled
+        
         isGpsEnabled = syncPrefs.isGpsEnabled()
         isStepSensorEnabled = syncPrefs.isStepSensorEnabled()
         isPressureSensorEnabled = syncPrefs.isPressureSensorEnabled()
@@ -266,6 +270,25 @@ class LocationTrackingService : Service(), SensorEventListener {
         if (!isGpsEnabled && !isStepSensorEnabled) {
             isGpsEnabled = true
             syncPrefs.setGpsEnabled(true)
+        }
+        
+        // 센서 설정 변경 시 계산 기준점 재설정
+        if (previousGpsEnabled != isGpsEnabled) {
+            Log.d(TAG, "[SENSOR_TOGGLE] GPS 설정 변경: $previousGpsEnabled -> $isGpsEnabled")
+            lastDistanceForStepCalculation = totalDistance
+        }
+        if (previousStepSensorEnabled != isStepSensorEnabled) {
+            Log.d(TAG, "[SENSOR_TOGGLE] 걸음 센서 설정 변경: $previousStepSensorEnabled -> $isStepSensorEnabled")
+            if (isStepSensorEnabled) {
+                // 걸음 센서 활성화 시: 현재 가속도계 걸음을 기준점으로
+                initialStepCount = 0L
+                lastStepCountForDistanceCalc = 0L
+                Log.d(TAG, "[SENSOR_TOGGLE] 걸음 센서 활성화: 기준점 재설정")
+            } else {
+                // 걸음 센서 비활성화 시: GPS 기반 계산 준비
+                lastDistanceForStepCalculation = totalDistance
+                Log.d(TAG, "[SENSOR_TOGGLE] 걸음 센서 비활성화: GPS 기반 계산 준비")
+            }
         }
     }
 
@@ -310,6 +333,8 @@ class LocationTrackingService : Service(), SensorEventListener {
         caloriesAtStartOfDay = 0.0
         altitudeAtStartOfDay = 0.0
         currentSteps = 0L
+        sensorBasedSteps = 0L
+        gpsBasedSteps = 0L
         totalDistance = 0.0
         totalCalories = 0.0
         totalAltitudeGain = 0.0
@@ -325,13 +350,14 @@ class LocationTrackingService : Service(), SensorEventListener {
         distanceSynced = 0.0
         caloriesSynced = 0.0
         altitudeSynced = 0.0
+        lastDistanceForStepCalculation = 0.0  // GPS 기반 걸음 계산 초기화
+        lastStepCountForDistanceCalc = 0L  // 거리 계산 기준점 초기화
         isInitialDataLoaded = false
     }
 
     private fun resetSpeed() {
         currentSpeed = 0.0f
         lastSpeedUpdateTime = System.currentTimeMillis()
-        lastValidMovementTime = 0L
     }
 
     private fun startSpeedMonitoring() {
@@ -383,7 +409,7 @@ class LocationTrackingService : Service(), SensorEventListener {
         val altitudeIncrement = totalAltitudeGain - altitudeSynced
 
         Log.d(TAG, "동기화 데이터 분석:")
-        Log.d(TAG, "  - 현재 걸음: $currentSteps, 동기화된 걸음: $stepsSynced -> 증분: $stepsIncrement")
+        Log.d(TAG, "  - 현재 걸음: $currentSteps (센서=$sensorBasedSteps + GPS=$gpsBasedSteps), 동기화된 걸음: $stepsSynced -> 증분: $stepsIncrement")
         Log.d(TAG, "  - 현재 거리: $totalDistance, 동기화된 거리: $distanceSynced -> 증분: $distanceIncrement")
         Log.d(TAG, "  - 현재 칼로리: $totalCalories, 동기화된 칼로리: $caloriesSynced -> 증분: $caloriesIncrement")
         Log.d(TAG, "  - 현재 고도: $totalAltitudeGain, 동기화된 고도: $altitudeSynced -> 증분: $altitudeIncrement")
@@ -583,7 +609,6 @@ class LocationTrackingService : Service(), SensorEventListener {
         Log.d(TAG, "[LOCATION_UPDATE] 유효 이동: ${"%.2f".format(distance)}m, 속도: ${"%.2f".format(rawSpeed)}m/s")
 
         lastActivityTime = System.currentTimeMillis()
-        lastValidMovementTime = System.currentTimeMillis()
         currentSpeed = smoothSpeed(rawSpeed)
         lastSpeedUpdateTime = System.currentTimeMillis()
 
@@ -604,10 +629,16 @@ class LocationTrackingService : Service(), SensorEventListener {
             }
         }
 
-        if (!isStepSensorEnabled && userStride > 0) {
-            val stepsFromDistance = (totalDistance * 1000 / userStride).toLong()
-            if (stepsFromDistance > currentSteps) {
-                currentSteps = stepsFromDistance
+        // 걸음 센서가 비활성화되었을 때 GPS 거리 기반으로 걸음 수 계산
+        if (!isStepSensorEnabled && userStride > 0.0) {
+            val distanceIncrementKm = totalDistance - lastDistanceForStepCalculation
+            val distanceIncrementMeters = distanceIncrementKm * 1000.0
+            val stepsFromIncrement = (distanceIncrementMeters / userStride).toLong()
+            if (stepsFromIncrement > 0) {
+                gpsBasedSteps += stepsFromIncrement
+                lastDistanceForStepCalculation = totalDistance
+                currentSteps = sensorBasedSteps + gpsBasedSteps  // 최종 = 센서 + GPS
+                Log.d(TAG, "[GPS_STEP_CALC] GPS 거리증분=${String.format("%.3f", distanceIncrementKm)}km, 보폭=${userStride}m -> GPS걸음=$stepsFromIncrement, GPS누계=$gpsBasedSteps, 최종=$currentSteps")
             }
         }
 
@@ -663,10 +694,14 @@ class LocationTrackingService : Service(), SensorEventListener {
 
         // 현재 세션 데이터 초기화
         currentSteps = 0L
+        sensorBasedSteps = 0L
+        gpsBasedSteps = 0L
         totalDistance = 0.0
         totalCalories = 0.0
         totalAltitudeGain = 0.0
         initialStepCount = 0L // [핵심 수정] 걸음수 계산 기준 초기화
+        lastDistanceForStepCalculation = 0.0  // GPS 기반 걸음 계산 초기화
+        lastStepCountForDistanceCalc = 0L
 
         // 동기화 데이터 초기화
         stepsSynced = 0L
@@ -735,6 +770,7 @@ class LocationTrackingService : Service(), SensorEventListener {
             val user = repository.getCurrentUser()
             user?.let { userWeight = it.weight }
             userStride = syncPrefs.getUserStride()
+            Log.d(TAG, "사용자 데이터 로드: weight=$userWeight, stride=$userStride")
         }
     }
 
@@ -841,11 +877,8 @@ class LocationTrackingService : Service(), SensorEventListener {
             }
         }.build()
 
-        try {
-            fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
-        } catch (e: SecurityException) {
-            stopSelf()
-        }
+        // 안전하게 위치 업데이트 요청
+        safeRequestLocationUpdates(locationRequest)
         exitStillMode()
     }
 
@@ -910,10 +943,21 @@ class LocationTrackingService : Service(), SensorEventListener {
             setMaxUpdateDelayMillis(LOCATION_INTERVAL_STILL * 2)
         }.build()
 
-        try {
-            fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
-        } catch (e: SecurityException) {}
+        safeRequestLocationUpdates(locationRequest)
         updateNotification()
+    }
+
+    // Helper to centralize try/catch for requesting location updates
+    private fun safeRequestLocationUpdates(request: LocationRequest) {
+        try {
+            fusedLocationClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
+        } catch (e: SecurityException) {
+            Log.w(TAG, "safeRequestLocationUpdates: SecurityException - stopping service or ignoring", e)
+            // If it's a fatal security exception (missing runtime perms), stop service to avoid repeated exceptions
+            try {
+                stopSelf()
+            } catch (_: Exception) {}
+        }
     }
 
     private fun exitStillMode() {

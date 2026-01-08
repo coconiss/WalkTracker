@@ -38,6 +38,16 @@ class FirebaseRepository(context: Context) {
         private const val TAG = "FirebaseRepository"
     }
 
+    // Generic helper to run suspend calls and convert exceptions to Result
+    private suspend inline fun <T> safeResult(action: suspend () -> T): Result<T> {
+        return try {
+            Result.success(action())
+        } catch (e: Exception) {
+            Log.e(TAG, "safeResult failed", e)
+            Result.failure(e)
+        }
+    }
+
     // --- Authentication --- //
 
     fun getCurrentUserId(): String? = auth.currentUser?.uid
@@ -73,11 +83,9 @@ class FirebaseRepository(context: Context) {
     }
 
     suspend fun loginWithEmailPassword(email: String, password: String): Result<Unit> {
-        return try {
+        return safeResult {
             auth.signInWithEmailAndPassword(email, password).await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
+            Unit
         }
     }
 
@@ -134,20 +142,16 @@ class FirebaseRepository(context: Context) {
     }
 
     suspend fun saveUser(user: User): Result<Unit> {
-        return try {
+        return safeResult {
             usersCollection.document(user.userId).set(user).await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
+            Unit
         }
     }
 
     suspend fun updateUserWeight(userId: String, weight: Double): Result<Unit> {
-        return try {
+        return safeResult {
             usersCollection.document(userId).update("weight", weight).await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
+            Unit
         }
     }
 
@@ -225,7 +229,7 @@ class FirebaseRepository(context: Context) {
         routes: List<RoutePoint> = emptyList()
     ): Result<Unit> {
         Log.d(TAG, "Room 활동 업데이트 시도 - userId: $userId, date: $date, steps 증분: $steps")
-        return try {
+        return safeResult {
             dailyActivityDao.incrementActivity(
                 userId = userId,
                 date = date,
@@ -237,19 +241,16 @@ class FirebaseRepository(context: Context) {
             )
             val updatedActivity = dailyActivityDao.getActivityByUserAndDate(userId, date)
             Log.d(TAG, "Room 활동 업데이트 성공 후 데이터: $updatedActivity")
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Log.e(TAG, "Room 활동 업데이트 실패 - userId: $userId, date: $date", e)
-            Result.failure(e)
+            Unit
         }
     }
 
     suspend fun syncUnsyncedActivities(): Result<Unit> {
-        return try {
+        return safeResult {
             val unsyncedList = dailyActivityDao.getUnsyncedActivities()
             if (unsyncedList.isEmpty()) {
                 Log.d(TAG, "동기화할 데이터 없음")
-                return Result.success(Unit)
+                return@safeResult Unit
             }
 
             Log.d(TAG, "Firestore 동기화 시작: ${unsyncedList.size}개 항목")
@@ -269,10 +270,7 @@ class FirebaseRepository(context: Context) {
                 }
             }
 
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Log.e(TAG, "Firestore 동기화 실패", e)
-            Result.failure(e)
+            Unit
         }
     }
 

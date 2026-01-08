@@ -5,14 +5,15 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import com.walktracker.app.service.LocationTrackingService
+import com.walktracker.app.util.SharedPreferencesManager
 
 class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
             // 추적이 활성화되어 있는지 확인
-            val prefs = context.getSharedPreferences("WalkTrackerPrefs", Context.MODE_PRIVATE)
-            val isTrackingEnabled = prefs.getBoolean("tracking_enabled", false)
+            val prefs = SharedPreferencesManager(context)
+            val isTrackingEnabled = prefs.isTrackingEnabled()
 
             if (isTrackingEnabled) {
                 val serviceIntent = Intent(context, LocationTrackingService::class.java)

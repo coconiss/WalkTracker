@@ -40,11 +40,13 @@ import com.walktracker.app.ui.screen.*
 import com.walktracker.app.ui.theme.WalkTrackerTheme
 import com.walktracker.app.viewmodel.MainViewModel
 import com.walktracker.app.viewmodel.RankingPeriod
+import com.walktracker.app.util.SharedPreferencesManager
 import kotlin.system.exitProcess
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var auth: FirebaseAuth
+    private lateinit var prefsManager: SharedPreferencesManager
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -72,6 +74,7 @@ class MainActivity : ComponentActivity() {
         Log.d(TAG, "onCreate: 액티비티 생성")
 
         auth = FirebaseAuth.getInstance()
+        prefsManager = SharedPreferencesManager(this)
         MobileAds.initialize(this) {}
 
         setContent {
@@ -210,20 +213,14 @@ class MainActivity : ComponentActivity() {
             startService(serviceIntent)
         }
 
-        getSharedPreferences("WalkTrackerPrefs", MODE_PRIVATE)
-            .edit()
-            .putBoolean("tracking_enabled", true)
-            .apply()
+        prefsManager.setTrackingEnabled(true)
     }
 
     private fun stopTrackingService() {
         Log.d(TAG, "stopTrackingService: 서비스 중지")
         stopService(Intent(this, LocationTrackingService::class.java))
 
-        getSharedPreferences("WalkTrackerPrefs", MODE_PRIVATE)
-            .edit()
-            .putBoolean("tracking_enabled", false)
-            .apply()
+        prefsManager.setTrackingEnabled(false)
     }
 
     /**
@@ -232,17 +229,8 @@ class MainActivity : ComponentActivity() {
     private fun clearAllData() {
         Log.d(TAG, "clearAllData: 모든 로컬 데이터 초기화")
 
-        // WalkTrackerPrefs 초기화
-        getSharedPreferences("WalkTrackerPrefs", MODE_PRIVATE)
-            .edit()
-            .clear()
-            .apply()
-
-        // WalkTrackerSyncPrefs 초기화
-        getSharedPreferences("WalkTrackerSyncPrefs", MODE_PRIVATE)
-            .edit()
-            .clear()
-            .apply()
+        // WalkTracker 관련 prefs 초기화
+        prefsManager.clearAllLocalPrefs()
 
         // osmdroid 캐시 초기화 (선택사항)
         getSharedPreferences("osmdroid", MODE_PRIVATE)

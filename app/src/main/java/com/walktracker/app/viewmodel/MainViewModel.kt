@@ -18,6 +18,7 @@ import com.walktracker.app.model.RankingLeaderboard
 import com.walktracker.app.model.User
 import com.walktracker.app.repository.FirebaseRepository
 import com.walktracker.app.service.LocationTrackingService
+import com.walktracker.app.util.SharedPreferencesManager
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -52,7 +53,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = FirebaseRepository(application.applicationContext)
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-    private val prefs = application.getSharedPreferences("WalkTrackerPrefs", Context.MODE_PRIVATE)
+    private val prefsManager = SharedPreferencesManager(application.applicationContext)
 
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
@@ -159,12 +160,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadNotificationSetting() {
-        val enabled = prefs.getBoolean("notification_enabled", true)
+        val enabled = prefsManager.isNotificationEnabled()
         _uiState.update { it.copy(notificationEnabled = enabled) }
     }
 
     fun setNotificationEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean("notification_enabled", enabled).apply()
+        prefsManager.setNotificationEnabled(enabled)
         _uiState.update { it.copy(notificationEnabled = enabled) }
     }
 
